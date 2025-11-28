@@ -6,7 +6,6 @@ import (
 	"os"
 )
 
-// Config Structure
 type AppSettings struct {
 	// "simple" (First 512 tokens) or "accurate" (Chunking)
 	EmbeddingStrategy string `json:"embedding_strategy"`
@@ -14,20 +13,16 @@ type AppSettings struct {
 	// Max vectors per file (Only used in "accurate" mode)
 	MaxChunksPerFile int `json:"max_chunks_per_file"`
 
-	// Paths to ignore (e.g. node_modules)
-	IgnoredPaths []string `json:"ignored_paths"`
-
-	// File extensions to read content from
+	IgnoredPaths      []string `json:"ignored_paths"`
 	AllowedExtensions []string `json:"allowed_extensions"`
 }
 
 var CurrentSettings AppSettings
 
-// Defaults
 func getDefaultSettings() AppSettings {
 	return AppSettings{
-		EmbeddingStrategy: "simple", // Default to fast mode
-		MaxChunksPerFile:  15,       // As per your request
+		EmbeddingStrategy: "simple",
+		MaxChunksPerFile:  15,
 		IgnoredPaths: []string{
 			"node_modules", ".git", "$RECYCLE.BIN", "System Volume Information",
 			"Windows", "Program Files", "Program Files (x86)",
@@ -38,11 +33,10 @@ func getDefaultSettings() AppSettings {
 	}
 }
 
-// Load or Create
 func LoadSettings() {
-	file, err := os.Open("settings.json")
+	path := GetDataPath("settings.json")
+	file, err := os.Open(path)
 	if err != nil {
-		// File doesn't exist? Create default.
 		fmt.Println("Settings file not found. Creating default settings.json...")
 		CurrentSettings = getDefaultSettings()
 		SaveSettings()
@@ -60,7 +54,8 @@ func LoadSettings() {
 }
 
 func SaveSettings() {
-	file, err := os.Create("settings.json")
+	path := GetDataPath("settings.json")
+	file, err := os.Create(path)
 	if err != nil {
 		fmt.Printf("Error saving settings: %v\n", err)
 		return

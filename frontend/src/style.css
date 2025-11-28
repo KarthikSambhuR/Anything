@@ -1,26 +1,138 @@
-html {
-    background-color: rgba(27, 38, 54, 1);
-    text-align: center;
-    color: white;
+:root {
+    --bg-color: rgba(30, 30, 46, 0.95);
+    /* Slight transparency */
+    --input-bg: transparent;
+    --text-color: #cdd6f4;
+    --accent-color: #89b4fa;
+    --selected-bg: rgba(137, 180, 250, 0.15);
+    /* Light blue highlight */
+    --highlight-text: #f38ba8;
 }
 
 body {
+    background-color: transparent;
+    /* Required for rounded corners on Windows */
     margin: 0;
-    color: white;
-    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-    sans-serif;
+    font-family: "Segoe UI", sans-serif;
+    color: var(--text-color);
+    overflow: hidden;
 }
 
-@font-face {
-    font-family: "Nunito";
-    font-style: normal;
-    font-weight: 400;
-    src: local(""),
-    url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
-}
-
-#app {
+.app-container {
+    background-color: var(--bg-color);
+    border-radius: 12px;
+    /* Rounded Window */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
     height: 100vh;
+    box-sizing: border-box;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    /* Deep shadow */
+}
+
+/* SEARCH BAR */
+.search-box {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    /* Allow dragging the window by holding the search bar */
+    --wails-draggable: drag;
+}
+
+#search-input {
+    flex: 1;
+    font-size: 22px;
+    background: transparent;
+    border: none;
+    color: white;
+    outline: none;
+    /* Don't let input steal the drag event */
+    --wails-draggable: no-drag;
+}
+
+/* RESULTS */
+.results-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: none;
+    /* Hidden by default */
+}
+
+/* Only show results when expanded */
+.app-container.expanded .results-container {
+    display: block;
+}
+
+.result-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s;
+    margin-bottom: 2px;
+}
+
+.result-item.selected {
+    background-color: var(--selected-bg);
+}
+
+.icon {
+    font-size: 24px;
+    margin-right: 15px;
+    width: 30px;
     text-align: center;
+}
+
+.content {
+    flex: 1;
+    overflow: hidden;
+}
+
+.filename {
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.path {
+    font-size: 11px;
+    color: #7f849c;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.snippet {
+    font-size: 12px;
+    color: #a6adc8;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.highlight {
+    color: var(--highlight-text);
+    font-weight: 700;
+}
+
+.score {
+    font-size: 10px;
+    color: #585b70;
+    margin-left: 10px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #45475a;
+    border-radius: 3px;
 }

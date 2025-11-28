@@ -23,12 +23,10 @@ var xmlTagRegex = regexp.MustCompile(`<[^>]*>`)
 // --- CLEANING ENGINE ---
 func cleanText(raw string, isXml bool) string {
 	if isXml {
-		// AGGRESSIVE FIX: Replace ALL tags with a space.
-		// Previous logic might have missed some edge cases or table boundaries.
-		// <w:t>Task</w:t><w:t>List</w:t> -> "Task List"
+		// Aggressive Fix: Replace all tags with space to handle table boundaries/formatting
 		raw = xmlTagRegex.ReplaceAllString(raw, " ")
 
-		// Decode common XML entities manually to ensure text is readable
+		// Decode common XML entities
 		raw = strings.ReplaceAll(raw, "&nbsp;", " ")
 		raw = strings.ReplaceAll(raw, "&quot;", "\"")
 		raw = strings.ReplaceAll(raw, "&apos;", "'")
@@ -39,19 +37,17 @@ func cleanText(raw string, isXml bool) string {
 
 	var b strings.Builder
 	b.Grow(len(raw))
-
-	// Track spacing to avoid double spaces
 	lastWasSpace := true
 
 	for _, r := range raw {
-		// Allow standard text + Newlines (important for structure)
+		// Allow standard text + Newlines
 		isValid := (r >= 32 && r <= 126) || r == '\n' || r == '\t'
 
 		if isValid {
 			b.WriteRune(r)
 			lastWasSpace = false
 		} else {
-			// Convert ANY weird char (or previous tag junk) into a single space
+			// Convert strange chars to single space
 			if !lastWasSpace {
 				b.WriteByte(' ')
 				lastWasSpace = true
@@ -111,7 +107,7 @@ func readDocxContent(path string) string {
 	}
 	defer r.Close()
 
-	// This library returns RAW XML (e.g. <w:t>Hello</w:t>), so we must use isXml=true
+	// Library returns RAW XML (e.g. <w:t>Hello</w:t>), so isXml = true
 	content := r.Editable().GetContent()
 
 	if len(content) > MaxReadSize {
@@ -135,9 +131,7 @@ func readTextContent(path string) string {
 	}
 
 	raw := string(buf[:n])
-
 	ext := strings.ToLower(filepath.Ext(path))
-	// HTML/XML/SVG need tag stripping
 	isXmlOrHtml := ext == ".xml" || ext == ".html" || ext == ".htm" || ext == ".svg"
 
 	return cleanText(raw, isXmlOrHtml)
@@ -224,12 +218,12 @@ func RunQuickScan(root string) {
 		if d.IsDir() {
 			name := d.Name()
 
-			// 1. GLOBAL SKIPS: Junk found everywhere
+			// 1. GLOBAL SKIPS
 			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "$RECYCLE.BIN" || name == "System Volume Information" {
 				return filepath.SkipDir
 			}
 
-			// 2. ROOT SKIPS: System folders at the drive root (C:\Windows)
+			// 2. ROOT SKIPS: System folders at drive root
 			if name == "Windows" || name == "Program Files" || name == "Program Files (x86)" {
 				parent := filepath.Dir(path)
 				if filepath.Clean(parent) == filepath.Clean(root) {
@@ -237,8 +231,7 @@ func RunQuickScan(root string) {
 				}
 			}
 
-			// 3. SPECIFIC JUNK: Windows Store App Data (Thousands of tiny useless files)
-			// We check if the folder is named "Packages" and is inside "AppData\Local"
+			// 3. SPECIFIC JUNK: Windows Store App Data packages
 			if name == "Packages" && strings.Contains(path, "AppData\\Local\\Packages") {
 				return filepath.SkipDir
 			}
@@ -345,8 +338,8 @@ func chunkText(text string, maxChunks int) []string {
 	words := strings.Fields(text)
 	var chunks []string
 
-	chunkSize := 300 // Words per chunk
-	overlap := 50    // Overlap for better context
+	chunkSize := 300
+	overlap := 50
 
 	for i := 0; i < len(words); i += (chunkSize - overlap) {
 		end := i + chunkSize
@@ -354,7 +347,6 @@ func chunkText(text string, maxChunks int) []string {
 			end = len(words)
 		}
 
-		// Rejoin words into a string
 		segment := strings.Join(words[i:end], " ")
 		chunks = append(chunks, segment)
 
@@ -363,7 +355,7 @@ func chunkText(text string, maxChunks int) []string {
 		}
 	}
 	if len(chunks) == 0 && len(text) > 0 {
-		return []string{text} // Fallback
+		return []string{text}
 	}
 	return chunks
 }
@@ -377,7 +369,6 @@ func RunEmbeddingScan() {
 	fmt.Println("\n>>> PHASE 3: AI Embedding Generation")
 	startTime := time.Now()
 
-	// 1. Get Pending Files
 	pendingFiles, err := GetFilesNeedingEmbedding()
 	if err != nil {
 		fmt.Printf("Error querying DB: %v\n", err)
@@ -390,7 +381,6 @@ func RunEmbeddingScan() {
 		return
 	}
 
-	// 2. Load Settings
 	maxChunks := CurrentSettings.MaxChunksPerFile
 	if maxChunks < 1 {
 		maxChunks = 1
@@ -401,29 +391,23 @@ func RunEmbeddingScan() {
 
 	count := 0
 
-	// 3. Process Loop
 	for id, summary := range pendingFiles {
 		count++
-		// Visual Progress
 		percent := (count * 100) / total
 		fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) Embedding...", count, total, percent)
 
 		var chunks []string
 
-		// Strategy Check
 		if CurrentSettings.EmbeddingStrategy == "simple" {
-			// Just take the whole summary (Tokenizer will truncate to 512 tokens automatically)
 			chunks = []string{summary}
 		} else {
-			// Chunking Strategy
 			chunks = chunkText(summary, maxChunks)
 		}
 
-		// Generate Vector for each chunk
 		for i, segment := range chunks {
 			if len(segment) < 10 {
 				continue
-			} // Skip empty/tiny chunks
+			}
 
 			vec, err := GetEmbedding(segment)
 			if err != nil {
@@ -431,12 +415,55 @@ func RunEmbeddingScan() {
 				continue
 			}
 
-			// Save to DB
 			SaveVector(id, i, vec)
 		}
 	}
 
 	fmt.Printf("\nPHASE 3 Complete! Vectors generated in %v\n", time.Since(startTime))
+}
+
+func RunIconScan() {
+	fmt.Println("\n>>> PHASE 4: Caching System Icons (to DB)")
+
+	var totalFiles int
+	DB.QueryRow("SELECT count(*) FROM files").Scan(&totalFiles)
+	fmt.Printf("[Debug] Total files in DB: %d\n", totalFiles)
+
+	rows, err := DB.Query("SELECT DISTINCT extension FROM files")
+	if err != nil {
+		fmt.Printf("Error querying extensions: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	stmt, _ := DB.Prepare(`INSERT OR REPLACE INTO extension_icons (extension, icon_data) VALUES (?, ?)`)
+	defer stmt.Close()
+
+	count := 0
+	foundExtensions := 0
+
+	for rows.Next() {
+		var ext string
+		if err := rows.Scan(&ext); err != nil {
+			continue
+		}
+
+		if ext == "" || len(ext) > 10 {
+			continue
+		}
+
+		foundExtensions++
+
+		b64 := GetExtensionIconBase64(ext)
+		if b64 != "" {
+			_, err := stmt.Exec(ext, b64)
+			if err == nil {
+				count++
+			}
+		}
+	}
+
+	fmt.Printf("Cached icons for %d / %d file types.\n", count, foundExtensions)
 }
 
 func truncateString(str string, num int) string {

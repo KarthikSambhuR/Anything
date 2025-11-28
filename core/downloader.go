@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// Helper to track download progress
 type WriteCounter struct {
 	Total uint64
 }
@@ -23,43 +22,35 @@ func (wc *WriteCounter) Write(p []byte) (int, error) {
 }
 
 func (wc *WriteCounter) PrintProgress() {
-	// clear the line by using a string of spaces
 	fmt.Printf("\r%s", strings.Repeat(" ", 35))
-	// return again and print current status of download
-	// We use MB for modern context
 	fmt.Printf("\rDownloading... %d MB complete", wc.Total/1024/1024)
 }
 
 func DownloadFile(url string, filepath string) error {
-	// Create the file
 	out, err := os.Create(filepath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	// Get the data
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	// Check server response
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	// Create our progress reporter and pass it to be used alongside our writer
 	counter := &WriteCounter{}
 	if _, err = io.Copy(out, io.TeeReader(resp.Body, counter)); err != nil {
 		return err
 	}
-	fmt.Print("\n") // New line after progress
+	fmt.Print("\n")
 	return nil
 }
 
-// Unzip specific file from archive (e.g., extract only onnxruntime.dll)
 func ExtractFileFromZip(zipPath string, targetFile string, destPath string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {

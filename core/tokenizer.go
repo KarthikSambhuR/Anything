@@ -8,7 +8,6 @@ import (
 	"unicode"
 )
 
-// Global Vocab Map
 var Vocab map[string]int64
 
 // Special Tokens for BERT
@@ -21,7 +20,7 @@ const (
 
 func InitTokenizer() {
 	fmt.Println("[AI] Loading Tokenizer Vocab...")
-	file, err := os.Open("vocab.txt")
+	file, err := os.Open(GetDataPath("vocab.txt"))
 	if err != nil {
 		fmt.Printf("❌ [AI Error] Could not load vocab.txt: %v\n", err)
 		return
@@ -39,13 +38,10 @@ func InitTokenizer() {
 	fmt.Printf("✅ [AI] Tokenizer Ready (%d words).\n", len(Vocab))
 }
 
-// Simple WordPiece Tokenizer
+// Tokenize implements a simple WordPiece-style tokenizer
 func Tokenize(text string) []int64 {
-	// 1. Clean and Lowercase
 	text = strings.ToLower(text)
 
-	// 2. Simple split by whitespace and punctuation
-	// This is a simplified version of BERT BasicTokenizer
 	var tokens []string
 	var currentToken strings.Builder
 
@@ -57,33 +53,25 @@ func Tokenize(text string) []int64 {
 				tokens = append(tokens, currentToken.String())
 				currentToken.Reset()
 			}
-			// Treat punctuation as separate token?
-			// For simplicity in v0.3, we ignore punctuation to match "Simple" mode
 		}
 	}
 	if currentToken.Len() > 0 {
 		tokens = append(tokens, currentToken.String())
 	}
 
-	// 3. Convert to IDs (WordPiece greedy matching)
 	var ids []int64
-	ids = append(ids, TokenCLS) // Start with [CLS]
+	ids = append(ids, TokenCLS)
 
 	for _, word := range tokens {
-		// Try to find the word in vocab
 		if id, ok := Vocab[word]; ok {
 			ids = append(ids, id)
 			continue
 		}
-
-		// If not found, try to break it down?
-		// For "Lightweight" v0.3, if it's not in vocab, we map to [UNK]
-		// Implementing full WordPiece sub-word splitting (play -> ##ing) is complex logic
-		// For now, we accept whole words or UNK.
+		// Fallback to UNK (Simplified vs full WordPiece splitting)
 		ids = append(ids, TokenUNK)
 	}
 
-	ids = append(ids, TokenSEP) // End with [SEP]
+	ids = append(ids, TokenSEP)
 
 	// Truncate to 512 (Model Limit)
 	if len(ids) > 512 {

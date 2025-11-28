@@ -4,32 +4,26 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/yalue/onnxruntime_go"
 )
 
-// AI Globals
 var (
 	ORT_Session *onnxruntime_go.DynamicSession[int64, float32]
 	IsAIReady   bool = false
 )
 
-// Constants
 const (
-	ModelPath = "model.onnx"
-	VocabPath = "vocab.txt"
-
-	ModelUrl = "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/model.onnx"
-	VocabUrl = "https://huggingface.co/optimum/all-MiniLM-L6-v2/blob/main/vocab.txt"
-
-	// UPDATED: Bumped to v1.20.1 to match your Go library version
+	ModelUrl     = "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/model.onnx"
+	VocabUrl     = "https://huggingface.co/optimum/all-MiniLM-L6-v2/raw/main/vocab.txt"
 	OnnxWinUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"
 	OnnxLinuxUrl = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz"
 	OnnxMacUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-universal2-1.22.0.tgz"
 )
 
-func getLibPath() string {
+func getLibName() string {
 	if runtime.GOOS == "windows" {
 		return "onnxruntime.dll"
 	}
@@ -39,54 +33,65 @@ func getLibPath() string {
 	return "libonnxruntime.so"
 }
 
+func getModelPath() string { return GetDataPath("model.onnx") }
+func getVocabPath() string { return GetDataPath("vocab.txt") }
+
 func InitAI() {
 	fmt.Println("[AI] Initializing ONNX Runtime...")
-	libPath := getLibPath()
 
-	// 1. Check & Download ONNX Runtime Library
-	if _, err := os.Stat(libPath); os.IsNotExist(err) {
-		fmt.Printf("⚠️  [AI] %s not found. Auto-downloading...\n", libPath)
-		if err := downloadOnnxRuntime(libPath); err != nil {
+	// We keep the DLL in the local folder (next to .exe) to avoid Antivirus issues with AppData execution
+	libName := getLibName()
+
+	if _, err := os.Stat(libName); os.IsNotExist(err) {
+		fmt.Printf("⚠️  [AI] %s not found. Auto-downloading...\n", libName)
+		if err := downloadOnnxRuntime(libName); err != nil {
 			fmt.Printf("❌ [AI Error] Download failed: %v\n", err)
 			return
 		}
 		fmt.Println("✅ [AI] Runtime library downloaded.")
 	}
 
-	// 2. Initialize Environment
-	onnxruntime_go.SetSharedLibraryPath(libPath)
-	err := onnxruntime_go.InitializeEnvironment()
+	// Important: Use Absolute Path for DLL to prevent Windows loading a wrong version from System32
+	absLibPath, err := filepath.Abs(libName)
+	if err != nil {
+		fmt.Printf("❌ [AI Error] Could not determine absolute path: %v\n", err)
+		return
+	}
+
+	fmt.Printf("[AI] Loading DLL from: %s\n", absLibPath)
+	onnxruntime_go.SetSharedLibraryPath(absLibPath)
+
+	err = onnxruntime_go.InitializeEnvironment()
 	if err != nil {
 		fmt.Printf("❌ [AI Error] Failed to init ONNX Environment: %v\n", err)
 		return
 	}
 
-	// 3. Check & Download Model
-	if _, err := os.Stat(ModelPath); os.IsNotExist(err) {
-		fmt.Printf("⚠️  [AI] %s not found. Auto-downloading...\n", ModelPath)
-		if err := DownloadFile(ModelUrl, ModelPath); err != nil {
+	modelPath := getModelPath()
+	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+		fmt.Printf("⚠️  [AI] Downloading model to %s...\n", modelPath)
+		if err := DownloadFile(ModelUrl, modelPath); err != nil {
 			fmt.Printf("❌ [AI Error] Model download failed: %v\n", err)
 			return
 		}
 		fmt.Println("✅ [AI] Model downloaded.")
 	}
 
-	// 4. Check & Download Vocab
-	if _, err := os.Stat(VocabPath); os.IsNotExist(err) {
-		fmt.Printf("⚠️  [AI] %s not found. Auto-downloading...\n", VocabPath)
-		if err := DownloadFile(VocabUrl, VocabPath); err != nil {
+	vocabPath := getVocabPath()
+	if _, err := os.Stat(vocabPath); os.IsNotExist(err) {
+		fmt.Printf("⚠️  [AI] Downloading vocab to %s...\n", vocabPath)
+		if err := DownloadFile(VocabUrl, vocabPath); err != nil {
 			fmt.Printf("❌ [AI Error] Vocab download failed: %v\n", err)
 			return
 		}
 		fmt.Println("✅ [AI] Vocab downloaded.")
 	}
 
-	// 5. Create Session
 	inputNames := []string{"input_ids", "attention_mask", "token_type_ids"}
 	outputNames := []string{"last_hidden_state"}
 
 	session, err := onnxruntime_go.NewDynamicSession[int64, float32](
-		ModelPath,
+		modelPath,
 		inputNames,
 		outputNames,
 	)
@@ -107,7 +112,6 @@ func CloseAI() {
 	onnxruntime_go.DestroyEnvironment()
 }
 
-// Logic to download and extract the correct DLL/SO based on OS
 func downloadOnnxRuntime(targetLibName string) error {
 	var downloadUrl string
 	var archiveName string
@@ -117,7 +121,7 @@ func downloadOnnxRuntime(targetLibName string) error {
 		downloadUrl = OnnxWinUrl
 		archiveName = "onnx_temp.zip"
 	case "linux":
-		return fmt.Errorf("manual download required for Linux in v0.3")
+		return fmt.Errorf("manual download required for Linux in this version")
 	default:
 		return fmt.Errorf("unsupported OS for auto-download")
 	}
@@ -138,18 +142,14 @@ func downloadOnnxRuntime(targetLibName string) error {
 
 // --- EMBEDDING ENGINE ---
 
-// --- EMBEDDING ENGINE ---
-
 func GetEmbedding(text string) ([]float32, error) {
 	if !IsAIReady || ORT_Session == nil {
 		return nil, fmt.Errorf("AI engine not ready")
 	}
 
-	// 1. Tokenize
 	inputIDSlice := Tokenize(text)
 	seqLength := int64(len(inputIDSlice))
 
-	// 2. Prepare Inputs
 	inputIDs := make([]int64, seqLength)
 	attentionMask := make([]int64, seqLength)
 	tokenTypeIDs := make([]int64, seqLength)
@@ -160,22 +160,19 @@ func GetEmbedding(text string) ([]float32, error) {
 		tokenTypeIDs[i] = 0
 	}
 
+	// Shape: [1, seqLength]
 	shape := []int64{1, seqLength}
 	tInput, _ := onnxruntime_go.NewTensor(shape, inputIDs)
 	tMask, _ := onnxruntime_go.NewTensor(shape, attentionMask)
 	tType, _ := onnxruntime_go.NewTensor(shape, tokenTypeIDs)
 
-	// 3. Prepare Output (The FIX)
-	// MiniLM output is [1, seqLength, 384]
+	// Prepare Output (Pre-allocated for DynamicSession)
 	hiddenSize := 384
 	outputShape := []int64{1, seqLength, int64(hiddenSize)}
-	// Allocate the flat array to hold the result
 	outputData := make([]float32, 1*seqLength*int64(hiddenSize))
 
 	tOutput, _ := onnxruntime_go.NewTensor(outputShape, outputData)
 
-	// 4. Run Inference
-	// Pass inputs AND outputs. Returns only error.
 	err := ORT_Session.Run(
 		[]*onnxruntime_go.Tensor[int64]{tInput, tMask, tType},
 		[]*onnxruntime_go.Tensor[float32]{tOutput},
@@ -184,10 +181,8 @@ func GetEmbedding(text string) ([]float32, error) {
 		return nil, err
 	}
 
-	// 5. Mean Pooling
-	// The 'outputData' slice is now filled with numbers by ONNX.
+	// Mean Pooling
 	embedding := make([]float32, hiddenSize)
-
 	for i := 0; i < int(seqLength); i++ {
 		start := i * hiddenSize
 		for j := 0; j < hiddenSize; j++ {
@@ -195,12 +190,11 @@ func GetEmbedding(text string) ([]float32, error) {
 		}
 	}
 
-	// Average
 	for j := 0; j < hiddenSize; j++ {
 		embedding[j] /= float32(seqLength)
 	}
 
-	// 6. Normalize
+	// Normalize (L2)
 	var sumSquares float32
 	for _, val := range embedding {
 		sumSquares += val * val

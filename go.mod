@@ -1,10 +1,20 @@
 module Anything
 
-go 1.23
-
-require github.com/wailsapp/wails/v2 v2.11.0
+go 1.24.1
 
 require (
+	github.com/fcjr/geticon v0.1.3
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
+	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
+	github.com/olebedev/when v1.1.0
+	github.com/wailsapp/wails/v2 v2.11.0
+	github.com/yalue/onnxruntime_go v1.20.0
+	golang.org/x/image v0.23.0
+)
+
+require (
+	github.com/AlekSi/pointer v1.0.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect

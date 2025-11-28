@@ -25,35 +25,29 @@ func getMonthWindow(t time.Time) (int64, int64) {
 	return start.Unix(), end.Unix()
 }
 
-// NEW: Manual Regex Helpers
+// manualFallback handles NLP cases that the library might miss
 func manualFallback(query string) (string, int64, int64) {
 	lower := strings.ToLower(query)
 	now := time.Now()
 
 	// 1. "Last Month"
 	if strings.Contains(lower, "last month") {
-		// Go back 1 month
 		lastMonth := now.AddDate(0, -1, 0)
 		start, end := getMonthWindow(lastMonth)
 
-		// Remove "last month" and "from" if present
 		clean := strings.ReplaceAll(lower, "last month", "")
 		clean = strings.ReplaceAll(clean, "from", "")
 		return strings.TrimSpace(clean), start, end
 	}
 
-	// 2. "Last Week"
+	// 2. "Last Week" (Previous Monday to Sunday)
 	if strings.Contains(lower, "last week") {
-		// Go back 7 days from now
-		// Or strictly: Previous Monday to Sunday
 		weekday := int(now.Weekday())
 		if weekday == 0 {
 			weekday = 7
 		}
 
-		// Start of THIS week
 		startOfThisWeek := now.AddDate(0, 0, -1*(weekday-1))
-		// Start of LAST week = Start of This Week - 7 days
 		startOfLastWeek := startOfThisWeek.AddDate(0, 0, -7)
 		start := time.Date(startOfLastWeek.Year(), startOfLastWeek.Month(), startOfLastWeek.Day(), 0, 0, 0, 0, now.Location())
 		end := start.AddDate(0, 0, 7).Add(-1 * time.Second)
@@ -86,7 +80,7 @@ func ParseDateQuery(query string) (string, int64, int64) {
 	// 1. Try Library First
 	res, err := w.Parse(query, time.Now())
 
-	// 2. IF LIBRARY FAILS -> USE MANUAL FALLBACK
+	// 2. Fallback if library fails
 	if err != nil || res == nil {
 		fmt.Printf("[NLP Debug] Library missed it. Trying Manual Fallback for: '%s'\n", query)
 		return manualFallback(query)
@@ -94,7 +88,6 @@ func ParseDateQuery(query string) (string, int64, int64) {
 
 	fmt.Printf("[NLP Debug] Library Found: '%s'\n", res.Text)
 
-	// Clean Query Logic (Library Success)
 	startIdx := res.Index
 	endIdx := res.Index + len(res.Text)
 	cleanQuery := strings.TrimSpace(query[:startIdx] + query[endIdx:])
@@ -103,7 +96,6 @@ func ParseDateQuery(query string) (string, int64, int64) {
 	target := res.Time
 	var minTime, maxTime int64
 
-	// Logic for Library Results
 	if strings.Contains(foundText, "month") ||
 		strings.Contains(foundText, "jan") || strings.Contains(foundText, "feb") ||
 		strings.Contains(foundText, "mar") || strings.Contains(foundText, "apr") ||
