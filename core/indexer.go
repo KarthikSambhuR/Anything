@@ -1,7 +1,6 @@
 package core
 
 import (
-	"database/sql"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,100 +8,143 @@ import (
 	"time"
 )
 
-func ScanDirectory(root string) {
-	fmt.Printf("\n>>> Starting Scan on Drive: %s\n", root)
-	startTime := time.Now()
+// Indexer Stats
+type IndexStats struct {
+	TotalScanned int
+	Added        int
+	Updated      int
+	Skipped      int
+	Duration     time.Duration
+}
 
-	// Transaction Variables
-	var tx *sql.Tx
-	var stmt *sql.Stmt
-	var err error
+// 1. Load ONLY the files for the specific drive we are scanning
+func LoadFileMap(driveRoot string) (map[string]int64, error) {
+	fmt.Printf("Loading index for %s into RAM... ", driveRoot)
+	fileMap := make(map[string]int64)
+
+	// OPTIMIZATION: Only fetch paths starting with the drive letter
+	// We use standard SQL wildcard: 'C:\%'
+	query := "SELECT path, modified_time FROM files WHERE path LIKE ?"
+	rows, err := DB.Query(query, driveRoot+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
 	count := 0
-	batchSize := 1000 // Save every 1000 files
-
-	// Helper to start a fresh transaction
-	startTx := func() {
-		tx, err = DB.Begin()
-		if err != nil {
-			fmt.Printf("Tx Error: %v\n", err)
-			return
+	for rows.Next() {
+		var path string
+		var modTime int64
+		if err := rows.Scan(&path, &modTime); err != nil {
+			continue
 		}
+		fileMap[path] = modTime
+		count++
+	}
+	fmt.Printf("Loaded %d files.\n", count)
+	return fileMap, nil
+}
 
-		query := `INSERT INTO files (path, filename, extension, modified_time) VALUES (?, ?, ?, ?)
-				  ON CONFLICT(path) DO UPDATE SET modified_time = excluded.modified_time;`
-		stmt, err = tx.Prepare(query)
-		if err != nil {
-			fmt.Printf("Stmt Error: %v\n", err)
-		}
+// 2. Incremental Scanner
+func ScanDirectory(root string) {
+	fmt.Printf("\n>>> Starting Smart Scan on: %s\n", root)
+	startTime := time.Now()
+	stats := IndexStats{}
+
+	// Step A: Load ONLY this drive's index
+	existingFiles, err := LoadFileMap(root)
+	if err != nil {
+		fmt.Printf("Error loading DB map: %v\n", err)
+		return
 	}
 
-	// Helper to commit current transaction
-	commitTx := func() {
-		if stmt != nil {
-			stmt.Close()
-		}
-		if tx != nil {
-			tx.Commit()
-		}
+	// Step B: Prepare Transactions
+	tx, err := DB.Begin()
+	if err != nil {
+		fmt.Printf("Tx Error: %v\n", err)
+		return
 	}
 
-	// Start the first batch
-	startTx()
+	insertQuery := `INSERT INTO files (path, filename, extension, modified_time) VALUES (?, ?, ?, ?)`
+	insertStmt, _ := tx.Prepare(insertQuery)
 
+	updateQuery := `UPDATE files SET modified_time = ? WHERE path = ?`
+	updateStmt, _ := tx.Prepare(updateQuery)
+
+	defer insertStmt.Close()
+	defer updateStmt.Close()
+
+	batchSize := 1000
+
+	// Step C: Walk the Disk
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
-		} // Skip denied
+		}
 		if d.IsDir() {
 			return nil
-		} // Skip folders
+		}
 
 		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
 
-		// Execute Insert (inside transaction)
-		if stmt != nil {
-			_, err = stmt.Exec(path, d.Name(), filepath.Ext(d.Name()), info.ModTime().Unix())
-		}
-		count++
+		currentModTime := info.ModTime().Unix()
+		stats.TotalScanned++
 
-		// --- BATCH SAVE ---
-		if count%batchSize == 0 {
-			commitTx() // Save 1000 files
-			startTx()  // Start new batch
-			fmt.Printf("\r[Saved: %d] %s                     ", count, truncateString(d.Name(), 30))
+		// --- CHECK RAM MAP ---
+		storedModTime, exists := existingFiles[path]
+
+		if exists {
+			if storedModTime == currentModTime {
+				stats.Skipped++
+				return nil // EXACT MATCH -> SKIP
+			}
+			// Modified? -> Update
+			_, err = updateStmt.Exec(currentModTime, path)
+			stats.Updated++
+		} else {
+			// New? -> Insert
+			_, err = insertStmt.Exec(path, d.Name(), filepath.Ext(d.Name()), currentModTime)
+			stats.Added++
+		}
+
+		// Optimization: Remove from map to free RAM as we go (optional, but nice)
+		delete(existingFiles, path)
+
+		// Batch Commit
+		currentChanges := stats.Added + stats.Updated
+		if currentChanges%batchSize == 0 && currentChanges > 0 {
+			tx.Commit()
+			tx, _ = DB.Begin()
+			insertStmt, _ = tx.Prepare(insertQuery)
+			updateStmt, _ = tx.Prepare(updateQuery)
+			fmt.Printf("\r[Scanned: %d] [New: %d] [Upd: %d] [Skip: %d]", stats.TotalScanned, stats.Added, stats.Updated, stats.Skipped)
 		}
 		return nil
 	})
 
-	// Final Save
-	commitTx()
+	tx.Commit() // Final Save
+	stats.Duration = time.Since(startTime)
 
-	fmt.Printf("\nFinished drive %s. Indexed %d files in %v\n", root, count, time.Since(startTime))
+	fmt.Printf("\n--- Scan Complete for %s ---\n", root)
+	fmt.Printf("Total Scanned: %d\n", stats.TotalScanned)
+	fmt.Printf("Added:         %d\n", stats.Added)
+	fmt.Printf("Updated:       %d\n", stats.Updated)
+	fmt.Printf("Skipped:       %d\n", stats.Skipped)
+	fmt.Printf("Time Taken:    %v\n", stats.Duration)
 }
 
-func truncateString(str string, num int) string {
-	if len(str) > num {
-		return str[0:num] + "..."
-	}
-	return str
-}
-
-// GetDrives detects all available drive letters
+// Helper
 func GetDrives() []string {
 	var drives []string
 	fmt.Println("Checking for available drives...")
 	for _, drive := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
 		path := string(drive) + ":\\"
-		fmt.Printf("Checking Drive %s... ", string(drive))
 		_, err := os.ReadDir(path)
 		if err == nil {
-			fmt.Println("FOUND")
 			drives = append(drives, path)
-		} else {
-			fmt.Println("Skipped")
 		}
 	}
 	return drives
