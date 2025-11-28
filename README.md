@@ -1,19 +1,41 @@
-# README
+# Anything Search
 
-## About
+**Anything** is a local, offline, semantic search engine and launcher for your desktop. It combines the speed of filename search with the intelligence of vector embeddings, allowing you to find files based on what they contain, not just what they are named.
 
-This is the official Wails Vanilla template.
+## ✨ Features
 
-You can configure the project by editing `wails.json`. More information about the project settings can be found
-here: https://wails.io/docs/reference/project-config
+### Intelligent Search
+* **Local Semantic Search:** Powered by **ONNX Runtime** and the `all-MiniLM-L6-v2` model. Search for "invoice" and find `budget.pdf` even if the word "invoice" isn't in the file.
+* **Hybrid Ranking:** Uses **Reciprocal Rank Fusion** to combine exact keyword matches (SQLite FTS5) with semantic vector matches (Cosine Similarity).
+* **Smart Chunking:** Splits large documents (PDFs, DOCX) into analyzed segments, allowing you to find specific paragraphs on page 50 of a report.
 
-## Live Development
+### ⚡ Performance & Privacy
+* **100% Offline:** No cloud APIs. No data leaves your machine.
+* **Blazingly Fast:** Vector embeddings are cached in RAM for sub-millisecond search speeds.
+* **Multi-Phase Indexing:**
+    1.  **Quick Scan:** Indexes filenames instantly.
+    2.  **Deep Scan:** Extracts text from `.txt`, `.md`, `.pdf`, `.docx` in the background.
+    3.  **Embedding Scan:** Converts text to vectors using local AI.
 
-To run in live development mode, run `wails dev` in the project directory. This will run a Vite development
-server that will provide very fast hot reload of your frontend changes. If you want to develop in a browser
-and have access to your Go methods, there is also a dev server that runs on http://localhost:34115. Connect
-to this in your browser, and you can call your Go code from devtools.
+### Natural Language Dates
+Filter your files using human-readable phrases:
+* *"Report from last month"*
+* *"Notes from yesterday"*
+* *"Budget from January"*
 
-## Building
+---
 
-To build a redistributable, production mode package, use `wails build`.
+## 🛠️ Installation
+
+### Prerequisites
+* **Go 1.22+** installed.
+* **GCC Compiler**.
+
+### Build from Source
+Since this project uses SQLite FTS5 (Fast Text Search), you **must** include the build tag.
+
+```bash
+git clone [https://github.com/yourusername/anything.git](https://github.com/KarthikSambhuR/Anything.git)
+cd Anything
+go build -tags fts5 -o Anything.exe main.go
+```
