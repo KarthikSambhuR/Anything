@@ -23,6 +23,15 @@ Filter your files using human-readable phrases:
 * *"Notes from yesterday"*
 * *"Budget from January"*
 
+### 🚀 Latest Updates
+* **Wails Migration:** Migrated CLI core to Wails backend with Vanilla JS frontend.
+* **Spotlight UI:** Implemented frameless Spotlight-style UI with dynamic resizing.
+* **App Scanning:** Added app scanning with 10x ranking boost for `.exe`/`.lnk`.
+* **Native Icons:** Implemented native Windows icon extraction using raw Shell32 API calls.
+* **Stability:** Switched to Base64 DB storage for icons to prevent file watcher crash loops.
+* **System Integration:** Moved database and AI models to `%APPDATA%` for stability.
+* **Fixes:** Fixed ONNX DLL version mismatch and SQL NULL scan errors.
+
 ---
 
 ## 🛠️ Installation
