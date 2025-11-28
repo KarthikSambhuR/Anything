@@ -8,7 +8,6 @@
 * **Local Semantic Search:** Powered by **ONNX Runtime** and the `all-MiniLM-L6-v2` model. Search for "invoice" and find `budget.pdf` even if the word "invoice" isn't in the file.
 * **Hybrid Ranking:** Uses **Reciprocal Rank Fusion** to combine exact keyword matches (SQLite FTS5) with semantic vector matches (Cosine Similarity).
 * **Smart Chunking:** Splits large documents (PDFs, DOCX) into analyzed segments, allowing you to find specific paragraphs on page 50 of a report.
-* **Natural Language Date Processing:** Converts natural language to dates, eg: from last month or from january.
 
 ### ⚡ Performance & Privacy
 * **100% Offline:** No cloud APIs. No data leaves your machine.
