@@ -1,3 +1,5 @@
+github.com/AlekSi/pointer v1.0.0 h1:KWCWzsvFxNLcmM5XmiqHsGTTsuwZMsLFwWF9Y+//bNE=
+github.com/AlekSi/pointer v1.0.0/go.mod h1:1kjywbfcPFCmncIxtk6fIEub6LKrfMz3gc5QKVOSOA8=
 github.com/fatih/color v1.18.0 h1:S8gINlzdQ840/4pfAwic/ZE0djQEH3wM94VfqLTZcOM=
 github.com/fatih/color v1.18.0/go.mod h1:4FelSpRwEGDpQ12mAdzqdOukCy4u8WUtOY6lkT/6HfU=
 github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728 h1:QwWKgMY28TAXaDl+ExRDqGQltzXqN/xypdKP86niVn8=
@@ -11,6 +13,12 @@ github.com/mattn/go-sqlite3 v1.14.32 h1:JD12Ag3oLy1zQA+BNn74xRgaBbdhbNIDYvQUEuuE
 github.com/mattn/go-sqlite3 v1.14.32/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
 github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db h1:v0cW/tTMrJQyZr7r6t+t9+NhH2OBAjydHisVYxuyObc=
 github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db/go.mod h1:BZyH8oba3hE/BTt2FfBDGPOHhXiKs9RFmUvvXRdzrhM=
+github.com/olebedev/when v1.1.0 h1:dlpoRa7huImhNtEx4yl0WYfTHVEWmJmIWd7fEkTHayc=
+github.com/olebedev/when v1.1.0/go.mod h1:T0THb4kP9D3NNqlvCwIG4GyUioTAzEhB4RNVzig/43E=
+github.com/pkg/errors v0.8.1 h1:iURUrRGxPUNPdy5/HRSm+Yj6okJ6UtLINN0Q9M4+h3I=
+github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+github.com/yalue/onnxruntime_go v1.20.0 h1:nPcP2UFeueGF/Ifwu3NBQzvNu8oHlJCul0WGPCviKk4=
+github.com/yalue/onnxruntime_go v1.20.0/go.mod h1:b4X26A8pekNb1ACJ58wAXgNKeUCGEAQ9dmACut9Sm/4=
 golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.25.0 h1:r+8e+loiHxRqhXVl6ML1nO3l1+oFoWbnlu2Ehimmi34=

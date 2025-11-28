@@ -23,11 +23,15 @@ var xmlTagRegex = regexp.MustCompile(`<[^>]*>`)
 // --- CLEANING ENGINE ---
 func cleanText(raw string, isXml bool) string {
 	if isXml {
-		// Replace tags with space so "hello</b><b>world" becomes "hello world"
-		// instead of "helloworld"
+		// AGGRESSIVE FIX: Replace ALL tags with a space.
+		// Previous logic might have missed some edge cases or table boundaries.
+		// <w:t>Task</w:t><w:t>List</w:t> -> "Task List"
 		raw = xmlTagRegex.ReplaceAllString(raw, " ")
 
+		// Decode common XML entities manually to ensure text is readable
 		raw = strings.ReplaceAll(raw, "&nbsp;", " ")
+		raw = strings.ReplaceAll(raw, "&quot;", "\"")
+		raw = strings.ReplaceAll(raw, "&apos;", "'")
 		raw = strings.ReplaceAll(raw, "&amp;", "&")
 		raw = strings.ReplaceAll(raw, "&lt;", "<")
 		raw = strings.ReplaceAll(raw, "&gt;", ">")
@@ -35,16 +39,19 @@ func cleanText(raw string, isXml bool) string {
 
 	var b strings.Builder
 	b.Grow(len(raw))
-	lastWasSpace := false
+
+	// Track spacing to avoid double spaces
+	lastWasSpace := true
 
 	for _, r := range raw {
-		// Allow standard ASCII (32-126), newline, and tab
+		// Allow standard text + Newlines (important for structure)
 		isValid := (r >= 32 && r <= 126) || r == '\n' || r == '\t'
 
 		if isValid {
 			b.WriteRune(r)
 			lastWasSpace = false
 		} else {
+			// Convert ANY weird char (or previous tag junk) into a single space
 			if !lastWasSpace {
 				b.WriteByte(' ')
 				lastWasSpace = true
@@ -52,7 +59,6 @@ func cleanText(raw string, isXml bool) string {
 		}
 	}
 
-	// Collapse multiple spaces into one using Fields
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
@@ -60,7 +66,7 @@ func cleanText(raw string, isXml bool) string {
 func isContentReadable(ext string) bool {
 	e := strings.ToLower(ext)
 	switch e {
-	case ".txt", ".md", ".markdown", ".rtf", ".pdf", ".docx":
+	case ".txt", ".rtf", ".pdf", ".docx":
 		return true
 	}
 	return false
@@ -214,18 +220,29 @@ func RunQuickScan(root string) {
 		if err != nil {
 			return nil
 		}
+
 		if d.IsDir() {
 			name := d.Name()
+
+			// 1. GLOBAL SKIPS: Junk found everywhere
 			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "$RECYCLE.BIN" || name == "System Volume Information" {
 				return filepath.SkipDir
 			}
+
+			// 2. ROOT SKIPS: System folders at the drive root (C:\Windows)
 			if name == "Windows" || name == "Program Files" || name == "Program Files (x86)" {
-				// Only skip these if they are at the drive root (e.g. C:\Windows)
 				parent := filepath.Dir(path)
 				if filepath.Clean(parent) == filepath.Clean(root) {
 					return filepath.SkipDir
 				}
 			}
+
+			// 3. SPECIFIC JUNK: Windows Store App Data (Thousands of tiny useless files)
+			// We check if the folder is named "Packages" and is inside "AppData\Local"
+			if name == "Packages" && strings.Contains(path, "AppData\\Local\\Packages") {
+				return filepath.SkipDir
+			}
+
 			return nil
 		}
 
@@ -322,6 +339,104 @@ func RunDeepScan() {
 
 	tx.Commit()
 	fmt.Printf("\nPHASE 2 Complete! Extracted text from %d files in %v\n", processedCount, time.Since(startTime))
+}
+
+func chunkText(text string, maxChunks int) []string {
+	words := strings.Fields(text)
+	var chunks []string
+
+	chunkSize := 300 // Words per chunk
+	overlap := 50    // Overlap for better context
+
+	for i := 0; i < len(words); i += (chunkSize - overlap) {
+		end := i + chunkSize
+		if end > len(words) {
+			end = len(words)
+		}
+
+		// Rejoin words into a string
+		segment := strings.Join(words[i:end], " ")
+		chunks = append(chunks, segment)
+
+		if len(chunks) >= maxChunks {
+			break
+		}
+	}
+	if len(chunks) == 0 && len(text) > 0 {
+		return []string{text} // Fallback
+	}
+	return chunks
+}
+
+func RunEmbeddingScan() {
+	if !IsAIReady {
+		fmt.Println("⚠️  AI Engine not ready. Skipping semantic indexing.")
+		return
+	}
+
+	fmt.Println("\n>>> PHASE 3: AI Embedding Generation")
+	startTime := time.Now()
+
+	// 1. Get Pending Files
+	pendingFiles, err := GetFilesNeedingEmbedding()
+	if err != nil {
+		fmt.Printf("Error querying DB: %v\n", err)
+		return
+	}
+
+	total := len(pendingFiles)
+	fmt.Printf("Found %d files needing vectors.\n", total)
+	if total == 0 {
+		return
+	}
+
+	// 2. Load Settings
+	maxChunks := CurrentSettings.MaxChunksPerFile
+	if maxChunks < 1 {
+		maxChunks = 1
+	}
+	if CurrentSettings.EmbeddingStrategy == "simple" {
+		maxChunks = 1 // Force single vector for simple mode
+	}
+
+	count := 0
+
+	// 3. Process Loop
+	for id, summary := range pendingFiles {
+		count++
+		// Visual Progress
+		percent := (count * 100) / total
+		fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) Embedding...", count, total, percent)
+
+		var chunks []string
+
+		// Strategy Check
+		if CurrentSettings.EmbeddingStrategy == "simple" {
+			// Just take the whole summary (Tokenizer will truncate to 512 tokens automatically)
+			chunks = []string{summary}
+		} else {
+			// Chunking Strategy
+			chunks = chunkText(summary, maxChunks)
+		}
+
+		// Generate Vector for each chunk
+		for i, segment := range chunks {
+			if len(segment) < 10 {
+				continue
+			} // Skip empty/tiny chunks
+
+			vec, err := GetEmbedding(segment)
+			if err != nil {
+				fmt.Printf("\nAI Error on file %d: %v\n", id, err)
+				continue
+			}
+
+			// Save to DB
+			SaveVector(id, i, vec)
+		}
+	}
+
+	fmt.Printf("\nPHASE 3 Complete! Vectors generated in %v\n", time.Since(startTime))
 }
 
 func truncateString(str string, num int) string {
