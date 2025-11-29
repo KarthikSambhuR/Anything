@@ -80,7 +80,46 @@ func InitDB(dbPath string) {
 		log.Fatal(err)
 	}
 
+	_, err = DB.Exec(`
+	CREATE TABLE IF NOT EXISTS usage_stats (
+		path TEXT PRIMARY KEY,
+		count INTEGER DEFAULT 1
+	);`)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	setupTriggers()
+}
+
+func IncrementUsage(path string) {
+	// Upsert: Insert as 1, or if exists, increment
+	query := `
+	INSERT INTO usage_stats (path, count) VALUES (?, 1)
+	ON CONFLICT(path) DO UPDATE SET count = count + 1;
+	`
+	_, err := DB.Exec(query, path)
+	if err != nil {
+		log.Printf("Error tracking usage: %v", err)
+	}
+}
+
+func GetUsageMap() map[string]float32 {
+	rows, err := DB.Query("SELECT path, count FROM usage_stats")
+	if err != nil {
+		return map[string]float32{}
+	}
+	defer rows.Close()
+
+	usage := make(map[string]float32)
+	for rows.Next() {
+		var path string
+		var count int
+		if err := rows.Scan(&path, &count); err == nil {
+			usage[path] = float32(count)
+		}
+	}
+	return usage
 }
 
 func setupTriggers() {

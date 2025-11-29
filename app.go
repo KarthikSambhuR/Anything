@@ -329,6 +329,11 @@ func (a *App) OnHide() {
 
 func (a *App) OpenFile(path string) {
 	fmt.Printf("Opening: %s\n", path)
+
+	// NEW: Track usage to boost this item in future searches
+	go core.IncrementUsage(path)
+
+	// ... rest of existing execution code ...
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/c", "start", "", path)
@@ -339,4 +344,7 @@ func (a *App) OpenFile(path string) {
 		cmd = exec.Command("xdg-open", path)
 	}
 	cmd.Start()
+
+	// Hide window immediately after launch for better UX
+	a.hideWindow()
 }
