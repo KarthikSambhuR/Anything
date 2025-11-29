@@ -4,6 +4,8 @@ import {core} from '../models';
 
 export function GetThumbnail(arg1:string):Promise<string>;
 
+export function OnHide():Promise<void>;
+
 export function OpenFile(arg1:string):Promise<void>;
 
 export function Search(arg1:string):Promise<Array<core.SearchResult>>;

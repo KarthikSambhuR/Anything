@@ -1,3 +1,5 @@
+import { OnHide } from '../wailsjs/go/main/App';
+
 const searchInput = document.getElementById('search-input');
 const resultsList = document.getElementById('results-list');
 const appContainer = document.querySelector('.app-container');
@@ -30,6 +32,7 @@ document.addEventListener('keydown', (e) => {
             renderResults([]);
             resizeWindow(false);
         } else {
+            OnHide();
             window.runtime.WindowHide();
         }
     }

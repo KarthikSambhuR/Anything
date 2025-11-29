@@ -6,6 +6,10 @@ export function GetThumbnail(arg1) {
   return window['go']['main']['App']['GetThumbnail'](arg1);
 }
 
+export function OnHide() {
+  return window['go']['main']['App']['OnHide']();
+}
+
 export function OpenFile(arg1) {
   return window['go']['main']['App']['OpenFile'](arg1);
 }

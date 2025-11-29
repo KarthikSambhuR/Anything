@@ -98,8 +98,10 @@ func (a *App) startup(ctx context.Context) {
 		} else {
 			// B. We are hidden/background -> SAVE current window and SHOW
 
-			// Save the current foreground window before we take focus
-			a.lastForegroundWindow = foreground
+			// Only save if the foreground window is valid and not us
+			if foreground != 0 && foreground != hwnd {
+				a.lastForegroundWindow = foreground
+			}
 
 			// Step 1: Force Restore if Minimized
 			isIconic, _, _ := procIsIconic.Call(hwnd)
@@ -116,7 +118,7 @@ func (a *App) startup(ctx context.Context) {
 			var foregroundThreadId uintptr
 			foregroundThreadId, _, _ = procGetWindowThreadProcessId.Call(foreground, 0)
 
-			if foregroundThreadId != currentThreadId {
+			if foregroundThreadId != currentThreadId && foregroundThreadId != 0 {
 				// Attach our thread to the foreground window's thread
 				procAttachThreadInput.Call(foregroundThreadId, currentThreadId, 1) // 1 = True
 
@@ -203,6 +205,13 @@ func (a *App) Search(query string) []core.SearchResult {
 		}
 	}
 	return results
+}
+
+func (a *App) OnHide() {
+	// Restore focus to the previous window
+	if a.lastForegroundWindow != 0 {
+		procSetForegroundWindow.Call(a.lastForegroundWindow)
+	}
 }
 
 func (a *App) OpenFile(path string) {
