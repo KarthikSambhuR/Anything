@@ -59,6 +59,8 @@ type App struct {
 	isWindowVisible      bool
 	visibilityMutex      sync.Mutex
 	ourWindowHandle      uintptr
+	ignoreFocusLoss      bool        // NEW: Flag to temporarily ignore focus loss
+	focusLossTimer       *time.Timer // NEW: Timer for delayed focus loss detection
 }
 
 func NewApp() *App {
@@ -66,7 +68,6 @@ func NewApp() *App {
 }
 
 func (a *App) GetThumbnail(path string) string {
-	// Call the core function we just exported
 	img, err := core.GetImageThumbnail(path)
 	if err != nil {
 		return ""
@@ -82,6 +83,7 @@ func (a *App) GetThumbnail(path string) string {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	core.SetContext(ctx)
 
 	fmt.Println("🚀 Starting Backend Engine...")
 	core.InitDB("./index.db")
@@ -93,13 +95,11 @@ func (a *App) startup(ctx context.Context) {
 	// Get and store our window handle once
 	ptrTitle, _ := syscall.UTF16PtrFromString("Anything")
 	a.ourWindowHandle, _, _ = procFindWindowW.Call(0, uintptr(unsafe.Pointer(ptrTitle)))
-	fmt.Printf("📌 Our window handle: %x\n", a.ourWindowHandle)
+	fmt.Printf("🔌 Our window handle: %x\n", a.ourWindowHandle)
 
 	core.StartHotkeyListener(core.CurrentSettings.Hotkey, func() {
-		// Use stored handle
 		hwnd := a.ourWindowHandle
 		if hwnd == 0 {
-			// Fallback: try to find it again
 			hwnd, _, _ = procFindWindowW.Call(0, uintptr(unsafe.Pointer(ptrTitle)))
 			if hwnd == 0 {
 				return
@@ -107,16 +107,15 @@ func (a *App) startup(ctx context.Context) {
 			a.ourWindowHandle = hwnd
 		}
 
-		// 2. Check State
 		a.visibilityMutex.Lock()
 		visible := a.isWindowVisible
 		a.visibilityMutex.Unlock()
 
 		if visible {
-			// A. We are active -> HIDE and restore previous window
+			fmt.Println("🔑 Hotkey pressed - HIDING window")
 			a.hideWindow()
 		} else {
-			// B. We are hidden/background -> SAVE current window and SHOW
+			fmt.Println("🔑 Hotkey pressed - SHOWING window")
 			foreground, _, _ := procGetForegroundWindow.Call()
 			a.showWindow(foreground, hwnd)
 		}
@@ -130,25 +129,92 @@ func (a *App) startup(ctx context.Context) {
 
 	// BACKGROUND INDEXING SEQUENCE
 	go func() {
-		core.RunAppScan() // 1. Apps
+		core.RunAppScan()
 
-		drives := core.GetDrives() // 2. Files
+		drives := core.GetDrives()
 		for _, drive := range drives {
 			core.RunQuickScan(drive)
 		}
 
-		core.RunIconScan() // 3. Icons
+		core.RunIconScan()
 		loadExtIcons()
 
 		fmt.Println("\n--- Starting Content Extraction ---")
-		core.RunDeepScan() // 4. Content (Text + OCR)
+		core.RunDeepScan()
 
 		fmt.Println("\n--- Starting AI Embedding ---")
-		core.RunEmbeddingScan() // 5. AI
+		core.RunEmbeddingScan()
 
 		core.LoadVectorIndex()
 		fmt.Println("\nAll Done. Ready.")
 	}()
+}
+
+func (a *App) OpenSettings() {
+	wruntime.WindowSetSize(a.ctx, 900, 600)
+	wruntime.WindowCenter(a.ctx)
+	wruntime.WindowShow(a.ctx)
+	wruntime.EventsEmit(a.ctx, "settings:open")
+
+	a.visibilityMutex.Lock()
+	a.isWindowVisible = true
+	a.ignoreFocusLoss = true // Ignore focus loss temporarily
+	a.visibilityMutex.Unlock()
+
+	// Re-enable focus loss detection after 500ms
+	time.AfterFunc(500*time.Millisecond, func() {
+		a.visibilityMutex.Lock()
+		a.ignoreFocusLoss = false
+		a.visibilityMutex.Unlock()
+		fmt.Println("✅ Focus loss detection enabled")
+	})
+}
+
+func (a *App) CloseSettings() {
+	wruntime.WindowSetSize(a.ctx, 700, 60)
+	wruntime.WindowCenter(a.ctx)
+	wruntime.WindowHide(a.ctx)
+
+	a.visibilityMutex.Lock()
+	a.isWindowVisible = false
+	a.ignoreFocusLoss = false
+	a.visibilityMutex.Unlock()
+}
+
+func (a *App) GetSettings() core.AppSettings {
+	return core.CurrentSettings
+}
+
+func (a *App) RebuildIndex() {
+	go func() {
+		core.EmitProgress("indexing", "Starting Full Rebuild...", 0)
+
+		drives := core.GetDrives()
+		for i, drive := range drives {
+			pct := (i * 100) / len(drives)
+			core.EmitProgress("indexing", fmt.Sprintf("Scanning %s...", drive), pct)
+			core.RunQuickScan(drive)
+		}
+
+		core.EmitProgress("indexing", "Extracting Content...", 50)
+		core.RunDeepScan()
+
+		core.EmitProgress("indexing", "Complete", 100)
+	}()
+}
+
+func (a *App) DownloadModels() {
+	go func() {
+		core.EmitProgress("download", "Checking Models...", 0)
+		core.InitAI()
+		core.InitVision()
+		core.EmitProgress("download", "All Models Ready", 100)
+	}()
+}
+
+func (a *App) SaveSettings(s core.AppSettings) {
+	core.CurrentSettings = s
+	core.SaveSettings()
 }
 
 func (a *App) hideWindow() {
@@ -156,20 +222,31 @@ func (a *App) hideWindow() {
 	defer a.visibilityMutex.Unlock()
 
 	if !a.isWindowVisible {
-		return // Already hidden
+		return
 	}
 
 	fmt.Println("🔒 Hiding window...")
 
-	// Get our window handle
+	// 1. Hide the window first
+	wruntime.WindowHide(a.ctx)
+	a.isWindowVisible = false
+	a.ignoreFocusLoss = false
+
+	// 2. THE FIX: Reset Geometry while hidden
+	// This ensures next time it opens, it's already the correct size and centered.
+	wruntime.WindowSetSize(a.ctx, 700, 60)
+	wruntime.WindowCenter(a.ctx)
+
+	// Cancel any pending focus loss timer
+	if a.focusLossTimer != nil {
+		a.focusLossTimer.Stop()
+		a.focusLossTimer = nil
+	}
+
+	// 3. Restore Focus
 	ptrTitle, _ := syscall.UTF16PtrFromString("Anything")
 	hwnd, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(ptrTitle)))
 
-	// First hide our window
-	wruntime.WindowHide(a.ctx)
-	a.isWindowVisible = false
-
-	// Then restore focus to the last window
 	if a.lastForegroundWindow != 0 && a.lastForegroundWindow != hwnd {
 		procSetForegroundWindow.Call(a.lastForegroundWindow)
 		fmt.Printf("🔄 Restored focus to previous window (handle: %x)\n", a.lastForegroundWindow)
@@ -178,76 +255,111 @@ func (a *App) hideWindow() {
 
 func (a *App) showWindow(foreground, hwnd uintptr) {
 	a.visibilityMutex.Lock()
-	defer a.visibilityMutex.Unlock()
 
-	// Only save if the foreground window is valid and not us
+	fmt.Printf("📖 showWindow called - foreground: %x, hwnd: %x\n", foreground, hwnd)
+
+	// Save the last foreground window (but not if it's us or null)
 	if foreground != 0 && foreground != hwnd {
 		a.lastForegroundWindow = foreground
-		fmt.Printf("💾 Saved previous window (handle: %x)\n", foreground)
+		fmt.Printf("💾 Saved last foreground window: %x\n", foreground)
+	} else {
+		fmt.Printf("⚠️ Not saving foreground (same as us or null)\n")
 	}
 
-	// Step 1: Force Restore if Minimized
+	// Set flags BEFORE showing to prevent race condition
+	a.isWindowVisible = true
+	a.ignoreFocusLoss = true
+
+	a.visibilityMutex.Unlock()
+
+	// Force restore if minimized
 	isIconic, _, _ := procIsIconic.Call(hwnd)
 	if isIconic != 0 {
+		fmt.Println("↗️ Window was minimized, restoring...")
 		procShowWindow.Call(hwnd, uintptr(SW_RESTORE))
 	} else {
 		procShowWindow.Call(hwnd, uintptr(SW_SHOW))
 	}
 
-	// Step 2: The Focus Stealing Hack (AttachThreadInput)
+	// Focus stealing hack
 	var currentThreadId uintptr
 	currentThreadId, _, _ = procGetCurrentThreadId.Call()
-
 	var foregroundThreadId uintptr
 	foregroundThreadId, _, _ = procGetWindowThreadProcessId.Call(foreground, 0)
 
 	if foregroundThreadId != currentThreadId && foregroundThreadId != 0 {
-		// Attach our thread to the foreground window's thread
-		procAttachThreadInput.Call(foregroundThreadId, currentThreadId, 1) // 1 = True
-
-		// Now we have permission to steal focus
+		procAttachThreadInput.Call(foregroundThreadId, currentThreadId, 1)
 		procSetForegroundWindow.Call(hwnd)
-
-		// Detach immediately
-		procAttachThreadInput.Call(foregroundThreadId, currentThreadId, 0) // 0 = False
+		procAttachThreadInput.Call(foregroundThreadId, currentThreadId, 0)
 	} else {
-		// Already on same thread (unlikely but possible), just set focus
 		procSetForegroundWindow.Call(hwnd)
 	}
 
-	// Step 3: Ensure Wails knows we are visible
+	// Show window & emit reset signal
 	wruntime.WindowShow(a.ctx)
-	a.isWindowVisible = true
-	fmt.Println("👁️ Window shown and focused")
+
+	fmt.Println("✨ Window shown, starting grace period...")
+
+	// Small delay before emitting reset to ensure window is ready
+	time.Sleep(50 * time.Millisecond)
+	wruntime.EventsEmit(a.ctx, "window:reset")
+
+	// Re-enable focus loss detection after delay
+	time.AfterFunc(800*time.Millisecond, func() {
+		a.visibilityMutex.Lock()
+		defer a.visibilityMutex.Unlock()
+
+		// Only enable if window is still visible
+		if a.isWindowVisible {
+			a.ignoreFocusLoss = false
+			fmt.Println("✅ Grace period ended - focus loss detection enabled")
+
+			// Log current state for debugging
+			fg, _, _ := procGetForegroundWindow.Call()
+			fmt.Printf("📊 Current foreground after grace: %x (ours: %x)\n", fg, hwnd)
+		}
+	})
 }
 
-// Monitor if the window loses focus (user clicked elsewhere)
 func (a *App) monitorFocusLoss() {
 	lastForeground := uintptr(0)
 	lastActive := uintptr(0)
+	consecutiveLosses := 0 // NEW: Count consecutive focus losses
 
 	for {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // Increased from 50ms to 100ms
 
 		a.visibilityMutex.Lock()
 		visible := a.isWindowVisible
 		hwnd := a.ourWindowHandle
+		ignore := a.ignoreFocusLoss
 		a.visibilityMutex.Unlock()
 
+		// Reset counter when not visible
 		if !visible || hwnd == 0 {
 			lastForeground = 0
 			lastActive = 0
+			consecutiveLosses = 0
 			continue
 		}
 
-		// Check both foreground AND active window (important for AlwaysOnTop windows)
+		// Skip monitoring if we're ignoring focus loss
+		if ignore {
+			lastForeground = 0
+			lastActive = 0
+			consecutiveLosses = 0
+			continue
+		}
+
+		// Check focus state
 		foreground, _, _ := procGetForegroundWindow.Call()
 		active, _, _ := procGetActiveWindow.Call()
 
-		// Debug: Log when things change
+		// Debug logging (only on changes)
 		if foreground != lastForeground {
 			if foreground == hwnd {
 				fmt.Printf("✅ Foreground: We have it (handle: %x)\n", hwnd)
+				consecutiveLosses = 0
 			} else if foreground != 0 {
 				fmt.Printf("⚠️ Foreground changed to: %x\n", foreground)
 			}
@@ -257,6 +369,7 @@ func (a *App) monitorFocusLoss() {
 		if active != lastActive {
 			if active == hwnd {
 				fmt.Printf("✅ Active: We have it (handle: %x)\n", hwnd)
+				consecutiveLosses = 0
 			} else if active != 0 {
 				fmt.Printf("⚠️ Active changed to: %x\n", active)
 			} else {
@@ -265,11 +378,31 @@ func (a *App) monitorFocusLoss() {
 			lastActive = active
 		}
 
-		// If EITHER foreground or active window is not us (and not null), hide
-		// For AlwaysOnTop windows, active window becomes null when clicking elsewhere
-		if (foreground != 0 && foreground != hwnd) || (active == 0 && lastActive == hwnd) {
-			fmt.Println("🔍 Focus lost - hiding window")
-			a.hideWindow()
+		// Check if we lost focus
+		lostFocus := false
+		if foreground != 0 && foreground != hwnd {
+			lostFocus = true
+		} else if active == 0 && lastActive == hwnd {
+			lostFocus = true
+		}
+
+		if lostFocus {
+			consecutiveLosses++
+			fmt.Printf("⚠️ Focus loss detected (count: %d)\n", consecutiveLosses)
+
+			// Only hide after 3 consecutive detections (300ms total)
+			// This prevents false positives from window activation timing
+			if consecutiveLosses >= 3 {
+				fmt.Println("🔒 Focus confirmed lost - hiding window")
+				a.hideWindow()
+				consecutiveLosses = 0
+			}
+		} else {
+			// Reset counter if we have focus
+			if consecutiveLosses > 0 {
+				fmt.Println("✅ Focus regained, resetting counter")
+			}
+			consecutiveLosses = 0
 		}
 	}
 }
@@ -299,18 +432,24 @@ func (a *App) Search(query string) []core.SearchResult {
 		return []core.SearchResult{}
 	}
 
-	results, err := core.HybridSearch(query)
-	if err != nil {
-		return []core.SearchResult{}
+	results, _ := core.HybridSearch(query)
+
+	lowerQ := strings.ToLower(query)
+	if strings.Contains("settings", lowerQ) || strings.Contains("config", lowerQ) {
+		settingsRes := core.SearchResult{
+			Path:      "anything://settings",
+			Snippet:   "Configure AI, Indexing, and Hotkeys",
+			Score:     1000.0,
+			IconData:  "",
+			Extension: ".settings",
+		}
+		results = append([]core.SearchResult{settingsRes}, results...)
 	}
 
 	for i := range results {
-		// Case A: Specific Icon exists (e.g. Apps)
 		if results[i].IconData != "" {
 			continue
 		}
-
-		// Case B: Fallback to Extension Icon
 		ext := strings.ToLower(results[i].Extension)
 		if icon, ok := extIconCache[ext]; ok {
 			results[i].IconData = icon
@@ -319,21 +458,15 @@ func (a *App) Search(query string) []core.SearchResult {
 	return results
 }
 
-func (a *App) OnHide() {
-	// Called from frontend when hiding
-	a.visibilityMutex.Lock()
-	a.isWindowVisible = false
-	a.visibilityMutex.Unlock()
-	fmt.Println("📞 Frontend requested hide")
-}
-
 func (a *App) OpenFile(path string) {
-	fmt.Printf("Opening: %s\n", path)
+	if path == "anything://settings" {
+		a.OpenSettings()
+		return
+	}
 
-	// NEW: Track usage to boost this item in future searches
+	fmt.Printf("Opening: %s\n", path)
 	go core.IncrementUsage(path)
 
-	// ... rest of existing execution code ...
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/c", "start", "", path)
@@ -345,6 +478,13 @@ func (a *App) OpenFile(path string) {
 	}
 	cmd.Start()
 
-	// Hide window immediately after launch for better UX
 	a.hideWindow()
+}
+
+func (a *App) OnHide() {
+	a.visibilityMutex.Lock()
+	a.isWindowVisible = false
+	a.ignoreFocusLoss = false
+	a.visibilityMutex.Unlock()
+	fmt.Println("📞 Frontend requested hide")
 }

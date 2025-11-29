@@ -17,7 +17,14 @@ type WriteCounter struct {
 func (wc *WriteCounter) Write(p []byte) (int, error) {
 	n := len(p)
 	wc.Total += uint64(n)
-	wc.PrintProgress()
+
+	// EMIT EVENT
+	// Assuming file size is roughly known or just show MB downloaded
+	// For exact percentage, we'd need total size passed in.
+	// For now, let's just emit the raw MB count as "message"
+	mb := wc.Total / 1024 / 1024
+	EmitProgress("download", fmt.Sprintf("Downloading Models... %d MB", mb), -1)
+
 	return n, nil
 }
 

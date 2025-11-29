@@ -3,26 +3,92 @@
 
 <head>
     <meta charset="UTF-8" />
-    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Anything</title>
     <link rel="stylesheet" href="./src/style.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 
 <body>
-    <div class="app-container">
+    <div id="launcher-view" class="app-container">
         <div class="search-box">
-            <input type="text" id="search-input" placeholder="Search anything..." autocomplete="off" autofocus />
+            <input type="text" id="search-input" placeholder="Search anything..." autocomplete="off" />
         </div>
-
-        <div id="results-list" class="results-container">
-            <div class="placeholder-text">Type to search your files...</div>
-        </div>
-
-        <div class="status-bar">
-            <span id="status-text">Ready</span>
-        </div>
+        <div id="results-list" class="results-container"></div>
     </div>
 
+    <div id="settings-view" class="settings-container hidden">
+        <div class="window-bar" style="--wails-draggable:drag">
+            <span class="window-title"><i class="fa-solid fa-layer-group"></i> Anything Settings</span>
+            <button class="window-close" onclick="closeSettings()">×</button>
+        </div>
+
+        <div class="settings-body">
+            <div class="sidebar">
+                <div class="nav-item active" onclick="switchTab('general')">
+                    <i class="fa-solid fa-sliders"></i> General
+                </div>
+                <div class="nav-item" onclick="switchTab('indexing')">
+                    <i class="fa-solid fa-database"></i> Indexing
+                </div>
+                <div class="nav-item" onclick="switchTab('ai')">
+                    <i class="fa-solid fa-robot"></i> AI & Models
+                </div>
+            </div>
+
+            <div class="content-area">
+                <div id="tab-general" class="tab-content active">
+                    <h2>General Configuration</h2>
+                    <div class="setting-row">
+                        <label>Activation Hotkey</label>
+                        <input type="text" id="set-hotkey" class="input-text" placeholder="Alt+Space">
+                    </div>
+                </div>
+
+                <div id="tab-indexing" class="tab-content">
+                    <h2>File Indexing</h2>
+                    <div class="status-card">
+                        <div class="status-header">
+                            <span>Index Build Status</span>
+                            <span id="idx-percent">100%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div id="idx-bar" class="progress-bar-fill" style="width: 100%"></div>
+                        </div>
+                        <div id="idx-details" class="status-details">System Ready</div>
+                    </div>
+                    <button class="btn-primary" onclick="triggerRebuild()">Rebuild Index Now</button>
+                </div>
+
+                <div id="tab-ai" class="tab-content">
+                    <h2>AI & Vision Models</h2>
+
+                    <div class="setting-row">
+                        <label>Enable Semantic Search</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="set-ai-enabled" onchange="toggleAI(this)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="status-card">
+                        <div class="status-header">
+                            <span>Model Download Status</span>
+                            <span id="dl-percent">0%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div id="dl-bar" class="progress-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <div id="dl-details" class="status-details">Waiting for tasks...</div>
+                    </div>
+
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn-secondary" onclick="triggerDownload()">Check & Download Models</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     <script src="./src/main.js" type="module"></script>
 </body>
 
