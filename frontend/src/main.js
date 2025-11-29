@@ -32,8 +32,7 @@ document.addEventListener('keydown', (e) => {
             renderResults([]);
             resizeWindow(false);
         } else {
-            OnHide();
-            window.runtime.WindowHide();
+            hideWindow();
         }
     }
     else if (e.key === 'ArrowDown') {
@@ -57,6 +56,12 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
+
+// Helper function to properly hide window and notify backend
+function hideWindow() {
+    OnHide(); // Notify backend to track state
+    window.runtime.WindowHide();
+}
 
 async function performSearch(query) {
     try {
@@ -115,12 +120,10 @@ function renderResults(results) {
         }
 
         item.innerHTML = `
-            <div class="icon">${iconHtml}</div>
-            <div class="content">
+            <div class="icon-wrapper">${iconHtml}</div> <div class="content">
                 <div class="filename">${filename}</div>
                 <div class="path">${dir}</div>
-                ${displaySnippet ? `<div class="snippet">${displaySnippet}</div>` : ''}
-            </div>
+                </div>
             ${res.Score ? `<div class="score">${res.Score.toFixed(1)}</div>` : ''}
         `;
 
@@ -155,7 +158,10 @@ function updateSelection() {
     items.forEach((item, index) => {
         if (index === selectedIndex) {
             item.classList.add('selected');
-            item.scrollIntoView({ block: 'nearest' });
+
+            // Auto-scroll logic
+            // 'scrollIntoView' with block: 'nearest' ensures it doesn't jump unnecessarily
+            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         } else {
             item.classList.remove('selected');
         }
@@ -163,14 +169,23 @@ function updateSelection() {
 }
 
 function resizeWindow(hasResults) {
+    const inputHeight = 60; // Matches CSS --input-height
+    const itemHeight = 50;  // Matches CSS --item-height
+    const padding = 10;     // Compact padding
+    const maxItemsVisible = 5;
+
     if (hasResults) {
-        window.runtime.WindowSetSize(700, 600);
+        const count = Math.min(currentResults.length, maxItemsVisible);
+
+        // Exact height calculation
+        const newHeight = inputHeight + (count * itemHeight) + padding;
+
+        window.runtime.WindowSetSize(700, newHeight);
         appContainer.classList.add('expanded');
     } else {
-        window.runtime.WindowSetSize(700, 60);
+        window.runtime.WindowSetSize(700, inputHeight);
         appContainer.classList.remove('expanded');
     }
-    setTimeout(() => { window.runtime.WindowCenter(); }, 10);
 }
 
 function getIconForPath(path) {
@@ -189,3 +204,9 @@ function getIconForPath(path) {
     }
     return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a6adc8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>`;
 }
+
+// Listen for window focus loss (when user clicks outside the window)
+window.runtime.EventsOn("wails:window:lostfocus", () => {
+    console.log("🔍 Window lost focus - hiding");
+    hideWindow();
+});
