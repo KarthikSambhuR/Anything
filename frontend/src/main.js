@@ -30,7 +30,7 @@ document.addEventListener('keydown', (e) => {
             renderResults([]);
             resizeWindow(false);
         } else {
-            window.runtime.Quit();
+            window.runtime.WindowHide();
         }
     }
     else if (e.key === 'ArrowDown') {
@@ -87,17 +87,22 @@ function renderResults(results) {
         const filename = parts.pop();
         const dir = parts.join(separator);
 
-        // --- FIX: Use IconData, not IconPath ---
+        // 1. DETERMINE INITIAL ICON
+        // Use backend data if available (e.g., App icons), otherwise default SVG
         let iconHtml = "";
+        let isLazyImage = false;
 
-        // Check if backend sent a Base64 string
-        if (res.IconData && res.IconData.startsWith("data:")) {
+        // Check extensions for lazy loading
+        const lowerPath = res.Path.toLowerCase();
+        if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.webp')) {
+            isLazyImage = true;
+            // Use the default SVG as a placeholder initially
+            iconHtml = `<div id="icon-${index}" class="icon-wrapper">${getIconForPath(res.Path)}</div>`;
+        } else if (res.IconData && res.IconData.startsWith("data:")) {
             iconHtml = `<img src="${res.IconData}" style="width:24px; height:24px; object-fit:contain;" />`;
         } else {
-            // Fallback to SVG mapper
             iconHtml = getIconForPath(res.Path);
         }
-        // ----------------------------------------
 
         let displaySnippet = "";
         if (res.Snippet) {
@@ -117,7 +122,29 @@ function renderResults(results) {
         `;
 
         resultsList.appendChild(item);
+
+        // 2. TRIGGER LAZY LOAD (If it's an image)
+        if (isLazyImage) {
+            loadThumbnailAsync(res.Path, index);
+        }
     });
+}
+
+// Helper: Fetches thumbnail and updates the DOM
+async function loadThumbnailAsync(path, index) {
+    try {
+        const base64Data = await window.go.main.App.GetThumbnail(path);
+        if (base64Data) {
+            const iconContainer = document.getElementById(`icon-${index}`);
+            if (iconContainer) {
+                // Replace SVG with the fetched Image
+                iconContainer.innerHTML = `<img src="${base64Data}" style="width:24px; height:24px; object-fit:cover; border-radius: 4px;" />`;
+            }
+        }
+    } catch (err) {
+        // Fail silently; keep the default icon
+        console.log("Failed to load thumbnail for:", path);
+    }
 }
 
 function updateSelection() {

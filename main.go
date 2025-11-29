@@ -20,6 +20,8 @@ func main() {
 		Width:  700,
 		Height: 60, // Start small (Input Bar only)
 
+		StartHidden: true,
+
 		// --- APPEARANCE & BEHAVIOR ---
 		Frameless:     true,
 		DisableResize: true,

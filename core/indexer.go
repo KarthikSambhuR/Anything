@@ -62,7 +62,7 @@ func cleanText(raw string, isXml bool) string {
 func isContentReadable(ext string) bool {
 	e := strings.ToLower(ext)
 	switch e {
-	case ".txt", ".rtf", ".pdf", ".docx":
+	case ".txt", ".rtf", ".pdf", ".docx", ".jpg", ".jpeg", ".png", ".webp":
 		return true
 	}
 	return false
@@ -144,11 +144,18 @@ func getContentWithTimeout(path string) string {
 	go func() {
 		ext := strings.ToLower(filepath.Ext(path))
 		var res string
+		var err error
+
 		switch ext {
 		case ".pdf":
 			res = readPdfContent(path)
 		case ".docx":
 			res = readDocxContent(path)
+		case ".jpg", ".jpeg", ".png", ".webp": // Add this block
+			res, err = AnalyzeImage(path)
+			if err != nil {
+				res = ""
+			}
 		default:
 			res = readTextContent(path)
 		}
@@ -219,7 +226,7 @@ func RunQuickScan(root string) {
 			name := d.Name()
 
 			// 1. GLOBAL SKIPS
-			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "$RECYCLE.BIN" || name == "System Volume Information" {
+			if strings.HasPrefix(name, "$") || strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".") || name == "node_modules" || name == "$RECYCLE.BIN" || name == "System Volume Information" {
 				return filepath.SkipDir
 			}
 

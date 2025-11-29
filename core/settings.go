@@ -11,7 +11,8 @@ type AppSettings struct {
 	EmbeddingStrategy string `json:"embedding_strategy"`
 
 	// Max vectors per file (Only used in "accurate" mode)
-	MaxChunksPerFile int `json:"max_chunks_per_file"`
+	MaxChunksPerFile int    `json:"max_chunks_per_file"`
+	Hotkey           string `json:"hotkey"`
 
 	IgnoredPaths      []string `json:"ignored_paths"`
 	AllowedExtensions []string `json:"allowed_extensions"`
@@ -23,6 +24,7 @@ func getDefaultSettings() AppSettings {
 	return AppSettings{
 		EmbeddingStrategy: "simple",
 		MaxChunksPerFile:  15,
+		Hotkey:            "Alt+Space",
 		IgnoredPaths: []string{
 			"node_modules", ".git", "$RECYCLE.BIN", "System Volume Information",
 			"Windows", "Program Files", "Program Files (x86)",

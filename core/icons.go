@@ -199,7 +199,7 @@ func isVideoFile(ext string) bool {
 	return false
 }
 
-func getImageThumbnail(path string) (image.Image, error) {
+func GetImageThumbnail(path string) (image.Image, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -259,7 +259,7 @@ func GetAppIconBase64(path string) string {
 
 	if isImageFile(ext) {
 		// Attempt thumbnail generation first
-		img, err = getImageThumbnail(absPath)
+		img, err = GetImageThumbnail(absPath)
 		if err != nil {
 			// Fallback to system icon
 			img, err = getIconFromShell(absPath)
