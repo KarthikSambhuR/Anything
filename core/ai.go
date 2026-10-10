@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	ORT_Session *onnxruntime_go.DynamicSession[int64, float32]
-	IsAIReady   bool = false
+	ORT_Session            *onnxruntime_go.DynamicSession[int64, float32]
+	ORT_GemmaTextSession   *onnxruntime_go.DynamicSession[int64, float32]
+	ORT_GemmaVisionSession *onnxruntime_go.DynamicSession[float32, float32]
+	IsAIReady              bool = false
 )
 
 const (
@@ -185,8 +187,34 @@ func InitAI() {
 			fmt.Println("⚠️  [AI] EmbeddingGemma 2 selected but not downloaded yet. Run download from Settings.")
 			return
 		}
-		fmt.Println("✅ [AI] EmbeddingGemma 2 detected on disk.")
+		
+		fmt.Println("✅ [AI] EmbeddingGemma 2 detected. Loading Text and Vision graphs...")
+
+		textSession, err1 := onnxruntime_go.NewDynamicSession[int64, float32](
+			GetDataPath("gemma_text_q4.onnx"),
+			[]string{"input_ids", "attention_mask"},
+			[]string{"last_hidden_state"},
+		)
+		if err1 != nil {
+			fmt.Printf("❌ [AI Error] Failed to load Gemma Text model: %v\n", err1)
+			return
+		}
+
+		visionSession, err2 := onnxruntime_go.NewDynamicSession[float32, float32](
+			GetDataPath("gemma_vision_q4.onnx"),
+			[]string{"pixel_values"},
+			[]string{"last_hidden_state"},
+		)
+		if err2 != nil {
+			fmt.Printf("❌ [AI Error] Failed to load Gemma Vision model: %v\n", err2)
+			textSession.Destroy()
+			return
+		}
+
+		ORT_GemmaTextSession = textSession
+		ORT_GemmaVisionSession = visionSession
 		IsAIReady = true
+		fmt.Println("✅ [AI] Gemma 2 Multimodal Engine Ready.")
 		return
 	}
 
@@ -232,6 +260,12 @@ func CloseAI() {
 	if ORT_Session != nil {
 		ORT_Session.Destroy()
 	}
+	if ORT_GemmaTextSession != nil {
+		ORT_GemmaTextSession.Destroy()
+	}
+	if ORT_GemmaVisionSession != nil {
+		ORT_GemmaVisionSession.Destroy()
+	}
 	onnxruntime_go.DestroyEnvironment()
 }
 
@@ -266,8 +300,16 @@ func downloadOnnxRuntime(targetLibName string) error {
 // --- EMBEDDING ENGINE ---
 
 func GetEmbedding(text string) ([]float32, error) {
-	if !IsAIReady || ORT_Session == nil {
+	if !IsAIReady {
 		return nil, fmt.Errorf("AI engine not ready")
+	}
+
+	isGemma := CurrentSettings.EmbeddingModel == "embeddinggemma-2-q4"
+	if isGemma && ORT_GemmaTextSession == nil {
+		return nil, fmt.Errorf("Gemma text session not loaded")
+	}
+	if !isGemma && ORT_Session == nil {
+		return nil, fmt.Errorf("MiniLM session not loaded")
 	}
 
 	inputIDSlice := Tokenize(text)
@@ -287,19 +329,30 @@ func GetEmbedding(text string) ([]float32, error) {
 	shape := []int64{1, seqLength}
 	tInput, _ := onnxruntime_go.NewTensor(shape, inputIDs)
 	tMask, _ := onnxruntime_go.NewTensor(shape, attentionMask)
-	tType, _ := onnxruntime_go.NewTensor(shape, tokenTypeIDs)
 
-	// Prepare Output (Pre-allocated for DynamicSession)
 	hiddenSize := 384
+	if isGemma {
+		hiddenSize = 768
+	}
+
 	outputShape := []int64{1, seqLength, int64(hiddenSize)}
 	outputData := make([]float32, 1*seqLength*int64(hiddenSize))
-
 	tOutput, _ := onnxruntime_go.NewTensor(outputShape, outputData)
 
-	err := ORT_Session.Run(
-		[]*onnxruntime_go.Tensor[int64]{tInput, tMask, tType},
-		[]*onnxruntime_go.Tensor[float32]{tOutput},
-	)
+	var err error
+	if isGemma {
+		err = ORT_GemmaTextSession.Run(
+			[]*onnxruntime_go.Tensor[int64]{tInput, tMask},
+			[]*onnxruntime_go.Tensor[float32]{tOutput},
+		)
+	} else {
+		tType, _ := onnxruntime_go.NewTensor(shape, tokenTypeIDs)
+		err = ORT_Session.Run(
+			[]*onnxruntime_go.Tensor[int64]{tInput, tMask, tType},
+			[]*onnxruntime_go.Tensor[float32]{tOutput},
+		)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +368,71 @@ func GetEmbedding(text string) ([]float32, error) {
 
 	for j := 0; j < hiddenSize; j++ {
 		embedding[j] /= float32(seqLength)
+	}
+
+	// Normalize (L2)
+	var sumSquares float32
+	for _, val := range embedding {
+		sumSquares += val * val
+	}
+	norm := float32(math.Sqrt(float64(sumSquares)))
+	if norm == 0 {
+		norm = 1e-9
+	}
+
+	for j := 0; j < hiddenSize; j++ {
+		embedding[j] /= norm
+	}
+
+	return embedding, nil
+}
+
+func GetImageEmbedding(path string) ([]float32, error) {
+	if !IsAIReady || ORT_GemmaVisionSession == nil {
+		return nil, fmt.Errorf("Gemma Vision engine not ready")
+	}
+
+	img, err := loadImage(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resize to 224x224 (Standard Vision Transformer input)
+	resized := resizeImage(img, 224, 224)
+	inputData := imageToFloat32(resized, 224, 224)
+
+	// Create Tensor: [1, 3, 224, 224]
+	tInput, err := onnxruntime_go.NewTensor([]int64{1, 3, 224, 224}, inputData)
+	if err != nil {
+		return nil, err
+	}
+
+	hiddenSize := 768
+	numPatches := 197 // 14x14 patches + 1 CLS token
+	outputShape := []int64{1, int64(numPatches), int64(hiddenSize)}
+	outputData := make([]float32, 1*int64(numPatches)*int64(hiddenSize))
+
+	tOutput, _ := onnxruntime_go.NewTensor(outputShape, outputData)
+
+	err = ORT_GemmaVisionSession.Run(
+		[]*onnxruntime_go.Tensor[float32]{tInput},
+		[]*onnxruntime_go.Tensor[float32]{tOutput},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Mean Pooling across all patches
+	embedding := make([]float32, hiddenSize)
+	for i := 0; i < numPatches; i++ {
+		start := i * hiddenSize
+		for j := 0; j < hiddenSize; j++ {
+			embedding[j] += outputData[start+j]
+		}
+	}
+
+	for j := 0; j < hiddenSize; j++ {
+		embedding[j] /= float32(numPatches)
 	}
 
 	// Normalize (L2)

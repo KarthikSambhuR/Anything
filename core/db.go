@@ -147,19 +147,25 @@ func setupTriggers() {
 	DB.Exec(`CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE ON files BEGIN INSERT INTO files_fts(files_fts, rowid, filename, summary, path) VALUES('delete', old.id, old.filename, old.summary, old.path); INSERT INTO files_fts(rowid, filename, summary, path) VALUES (new.id, new.filename, new.summary, new.path); END;`)
 }
 
-func GetFilesNeedingEmbedding() (map[int]string, error) {
-	query := `SELECT id, summary FROM files WHERE summary IS NOT NULL AND summary != "" AND id NOT IN (SELECT distinct file_id FROM file_vectors)`
+type FileData struct {
+	Path    string
+	Summary string
+}
+
+func GetFilesNeedingEmbedding() (map[int]FileData, error) {
+	query := `SELECT id, path, summary FROM files WHERE summary IS NOT NULL AND summary != "" AND id NOT IN (SELECT distinct file_id FROM file_vectors)`
 	rows, err := DB.Query(query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	results := make(map[int]string)
+	results := make(map[int]FileData)
 	for rows.Next() {
 		var id int
+		var path string
 		var summary string
-		if err := rows.Scan(&id, &summary); err == nil {
-			results[id] = summary
+		if err := rows.Scan(&id, &path, &summary); err == nil {
+			results[id] = FileData{Path: path, Summary: summary}
 		}
 	}
 	return results, nil

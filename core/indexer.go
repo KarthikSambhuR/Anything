@@ -152,10 +152,14 @@ func getContentWithTimeout(path string) string {
 			res = readPdfContent(path)
 		case ".docx":
 			res = readDocxContent(path)
-		case ".jpg", ".jpeg", ".png", ".webp": // Add this block
-			res, err = AnalyzeImage(path)
-			if err != nil {
-				res = ""
+		case ".jpg", ".jpeg", ".png", ".webp":
+			if CurrentSettings.EmbeddingModel == "embeddinggemma-2-q4" {
+				res = "[IMAGE_MULTIMODAL]"
+			} else {
+				res, err = AnalyzeImage(path)
+				if err != nil {
+					res = ""
+				}
 			}
 		default:
 			res = readTextContent(path)
@@ -423,18 +427,28 @@ func RunEmbeddingScan() {
 
 	count := 0
 
-	for id, summary := range pendingFiles {
+	for id, data := range pendingFiles {
 		count++
 		percent := (count * 100) / total
 		fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) Embedding...", count, total, percent)
 		EmitProgress("indexing", fmt.Sprintf("Embedding [%d / %d] files (%d%%)", count, total, percent), 70+(percent*30)/100)
 
+		if data.Summary == "[IMAGE_MULTIMODAL]" {
+			vec, err := GetImageEmbedding(data.Path)
+			if err != nil {
+				fmt.Printf("\nVision AI Error on file %d (%s): %v\n", id, data.Path, err)
+				continue
+			}
+			SaveVector(id, 0, vec)
+			continue
+		}
+
 		var chunks []string
 
 		if CurrentSettings.EmbeddingStrategy == "simple" {
-			chunks = []string{summary}
+			chunks = []string{data.Summary}
 		} else {
-			chunks = chunkText(summary, maxChunks)
+			chunks = chunkText(data.Summary, maxChunks)
 		}
 
 		for i, segment := range chunks {
