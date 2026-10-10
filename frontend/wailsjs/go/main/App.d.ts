@@ -4,11 +4,17 @@ import {core} from '../models';
 
 export function CloseSettings():Promise<void>;
 
+export function DownloadModel(arg1:string):Promise<void>;
+
 export function DownloadModels():Promise<void>;
+
+export function GetAvailableModels():Promise<Array<core.ModelInfo>>;
 
 export function GetSettings():Promise<core.AppSettings>;
 
 export function GetThumbnail(arg1:string):Promise<string>;
+
+export function IsSettingsWindow():Promise<boolean>;
 
 export function OnHide():Promise<void>;
 
@@ -21,3 +27,7 @@ export function RebuildIndex():Promise<void>;
 export function SaveSettings(arg1:core.AppSettings):Promise<void>;
 
 export function Search(arg1:string):Promise<Array<core.SearchResult>>;
+
+export function SetHeight(arg1:number):Promise<void>;
+
+export function SetWindowSize(arg1:number,arg2:number):Promise<void>;

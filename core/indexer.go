@@ -61,9 +61,10 @@ func cleanText(raw string, isXml bool) string {
 // --- WHITELIST ---
 func isContentReadable(ext string) bool {
 	e := strings.ToLower(ext)
-	switch e {
-	case ".txt", ".rtf", ".pdf", ".docx", ".jpg", ".jpeg", ".png", ".webp":
-		return true
+	for _, allowed := range CurrentSettings.AllowedExtensions {
+		if e == allowed {
+			return true
+		}
 	}
 	return false
 }
@@ -225,22 +226,34 @@ func RunQuickScan(root string) {
 		if d.IsDir() {
 			name := d.Name()
 
-			// 1. GLOBAL SKIPS
-			if strings.HasPrefix(name, "$") || strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".") || name == "node_modules" || name == "$RECYCLE.BIN" || name == "System Volume Information" {
-				return filepath.SkipDir
-			}
-
-			// 2. ROOT SKIPS: System folders at drive root
-			if name == "Windows" || name == "Program Files" || name == "Program Files (x86)" {
-				parent := filepath.Dir(path)
-				if filepath.Clean(parent) == filepath.Clean(root) {
+			// 1. GLOBAL SKIPS from settings
+			for _, ignored := range CurrentSettings.IgnoredPaths {
+				if strings.EqualFold(name, ignored) {
 					return filepath.SkipDir
 				}
 			}
 
-			// 3. SPECIFIC JUNK: Windows Store App Data packages
-			if name == "Packages" && strings.Contains(path, "AppData\\Local\\Packages") {
+			// Add basic defaults just in case
+			if strings.HasPrefix(name, "$") || strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".") || name == "$RECYCLE.BIN" {
 				return filepath.SkipDir
+			}
+
+			// 2. ROOT SKIPS: Skip system folders at drive root if they are not explicitly allowed
+			if name == "Windows" || name == "Program Files" || name == "Program Files (x86)" {
+				parent := filepath.Dir(path)
+				if filepath.Clean(parent) == filepath.Clean(root) {
+					// Only skip if the root is actually a drive root and it's not explicitly in IndexedDirectories
+					isExplicitlyIndexed := false
+					for _, indexedDir := range CurrentSettings.IndexedDirectories {
+						if strings.EqualFold(path, indexedDir) {
+							isExplicitlyIndexed = true
+							break
+						}
+					}
+					if !isExplicitlyIndexed {
+						return filepath.SkipDir
+					}
+				}
 			}
 
 			return nil
@@ -323,6 +336,10 @@ func RunDeepScan() {
 		percent := (processedCount * 100) / total
 		fmt.Printf("\r[DeepScan] [%d/%d] (%d%%) Reading: %-40s", processedCount, total, percent, truncateString(filepath.Base(path), 40))
 
+		if processedCount%20 == 0 || processedCount == total {
+			EmitProgress("indexing", fmt.Sprintf("Reading [%d / %d]: %s", processedCount, total, truncateString(filepath.Base(path), 30)), 35+(percent*35)/100)
+		}
+
 		content := getContentWithTimeout(path)
 
 		_, err := updateStmt.Exec(content, path)
@@ -339,6 +356,7 @@ func RunDeepScan() {
 
 	tx.Commit()
 	fmt.Printf("\nPHASE 2 Complete! Extracted text from %d files in %v\n", processedCount, time.Since(startTime))
+	EmitProgress("indexing", fmt.Sprintf("Phase 2 Complete: Extracted text from %d files", processedCount), 70)
 }
 
 func chunkText(text string, maxChunks int) []string {
@@ -347,6 +365,11 @@ func chunkText(text string, maxChunks int) []string {
 
 	chunkSize := 300
 	overlap := 50
+
+	if CurrentSettings.EmbeddingModel == "embeddinggemma-2-q4" {
+		chunkSize = 3000
+		overlap = 300
+	}
 
 	for i := 0; i < len(words); i += (chunkSize - overlap) {
 		end := i + chunkSize
@@ -370,6 +393,7 @@ func chunkText(text string, maxChunks int) []string {
 func RunEmbeddingScan() {
 	if !IsAIReady {
 		fmt.Println("⚠️  AI Engine not ready. Skipping semantic indexing.")
+		EmitProgress("indexing", "AI Engine not ready. Skipped vector embeddings.", -1)
 		return
 	}
 
@@ -385,6 +409,7 @@ func RunEmbeddingScan() {
 	total := len(pendingFiles)
 	fmt.Printf("Found %d files needing vectors.\n", total)
 	if total == 0 {
+		EmitProgress("indexing", "All vectors already synchronized.", 100)
 		return
 	}
 
@@ -402,6 +427,7 @@ func RunEmbeddingScan() {
 		count++
 		percent := (count * 100) / total
 		fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) Embedding...", count, total, percent)
+		EmitProgress("indexing", fmt.Sprintf("Embedding [%d / %d] files (%d%%)", count, total, percent), 70+(percent*30)/100)
 
 		var chunks []string
 
@@ -427,6 +453,7 @@ func RunEmbeddingScan() {
 	}
 
 	fmt.Printf("\nPHASE 3 Complete! Vectors generated in %v\n", time.Since(startTime))
+	EmitProgress("indexing", fmt.Sprintf("Phase 3 Complete: Indexed %d files", total), 100)
 }
 
 func RunIconScan() {

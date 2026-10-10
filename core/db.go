@@ -8,7 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite/vec"
 )
 
 var DB *sql.DB
@@ -26,15 +27,23 @@ func InitDB(dbPath string) {
 	// Use AppData path to ensure write permissions
 	realPath := GetDataPath("index.db")
 
+	// Set connection parameters: WAL mode, busy timeout of 10s, synchronous normal
+	dsn := realPath + "?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL&cache=shared"
+
 	var err error
-	DB, err = sql.Open("sqlite3", realPath)
+	DB, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Limit concurrent connections (WAL mode allows concurrent readers)
+	DB.SetMaxOpenConns(10)
+	DB.SetMaxIdleConns(5)
+
 	if _, err := DB.Exec("PRAGMA journal_mode=WAL;"); err != nil {
 		log.Printf("Failed to enable WAL: %v", err)
 	}
+	DB.Exec("PRAGMA busy_timeout = 10000;")
 
 	// Main file registry. 'icon_data' stores base64 images.
 	_, err = DB.Exec(`
@@ -62,10 +71,19 @@ func InitDB(dbPath string) {
 	CREATE TABLE IF NOT EXISTS file_vectors (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		file_id INTEGER,
-		vector_blob BLOB,
 		chunk_index INTEGER,
 		FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
 	);`)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = DB.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_minilm USING vec0(embedding float[384]);`)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = DB.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_gemma USING vec0(embedding float[768]);`)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -148,13 +166,27 @@ func GetFilesNeedingEmbedding() (map[int]string, error) {
 }
 
 func SaveVector(fileId int, chunkIndex int, vector []float32) error {
+	res, err := DB.Exec(`INSERT INTO file_vectors (file_id, chunk_index) VALUES (?, ?)`, fileId, chunkIndex)
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+
 	// Convert []float32 to byte slice for BLOB storage
 	byteBuf := make([]byte, len(vector)*4)
 	for i, v := range vector {
 		bits := math.Float32bits(v)
 		binary.LittleEndian.PutUint32(byteBuf[i*4:], bits)
 	}
-	_, err := DB.Exec(`INSERT INTO file_vectors (file_id, chunk_index, vector_blob) VALUES (?, ?, ?)`, fileId, chunkIndex, byteBuf)
+	
+	if len(vector) == 384 {
+		_, err = DB.Exec(`INSERT INTO vec_minilm (rowid, embedding) VALUES (?, ?)`, id, byteBuf)
+	} else if len(vector) == 768 {
+		_, err = DB.Exec(`INSERT INTO vec_gemma (rowid, embedding) VALUES (?, ?)`, id, byteBuf)
+	}
 	return err
 }
 
@@ -192,6 +224,7 @@ func SearchFiles(queryText string, minTime int64, maxTime int64) ([]SearchResult
 
 	rows, err := DB.Query(baseQuery, args...)
 	if err != nil {
+		log.Printf("SearchFiles SQL error for query %q: %v", contentQuery, err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -201,6 +234,7 @@ func SearchFiles(queryText string, minTime int64, maxTime int64) ([]SearchResult
 		var res SearchResult
 		var rank float32
 		if err := rows.Scan(&res.Path, &res.Snippet, &res.IconData, &res.Extension, &rank); err != nil {
+			log.Printf("SearchFiles scan error: %v", err)
 			return nil, err
 		}
 		// Invert rank (FTS returns negative for better matches) and scale

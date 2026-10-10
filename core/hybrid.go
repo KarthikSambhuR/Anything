@@ -13,8 +13,7 @@ const (
 )
 
 func HybridSearch(rawQuery string) ([]SearchResult, error) {
-	// 1. NLP Date Parsing
-	cleanQuery, minTime, maxTime := ParseDateQuery(rawQuery)
+	cleanQuery := strings.TrimSpace(rawQuery)
 
 	var wg sync.WaitGroup
 
@@ -29,13 +28,13 @@ func HybridSearch(rawQuery string) ([]SearchResult, error) {
 	go func() {
 		defer wg.Done()
 		if IsAIReady {
-			vectorResults, errVector = SemanticSearch(cleanQuery, minTime, maxTime)
+			vectorResults, errVector = SemanticSearch(cleanQuery, 0, 0)
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		keywordResults, errKeyword = SearchFiles(cleanQuery, minTime, maxTime)
+		keywordResults, errKeyword = SearchFiles(cleanQuery, 0, 0)
 	}()
 
 	wg.Wait()
@@ -72,8 +71,21 @@ func HybridSearch(rawQuery string) ([]SearchResult, error) {
 
 		// C. Exact Name Match Boost
 		name := filepath.Base(lower)
-		if strings.HasPrefix(name, strings.ToLower(cleanQuery)) {
-			score *= 1.5
+		queryLower := strings.ToLower(cleanQuery)
+		
+		// If exact match or exact prefix match without extension, boost to the top
+		nameWithoutExt := strings.TrimSuffix(name, filepath.Ext(name))
+		if name == queryLower || nameWithoutExt == queryLower {
+			score += 10000.0
+		} else if strings.HasPrefix(name, queryLower) || strings.HasPrefix(nameWithoutExt, queryLower) {
+			score += 5000.0
+		}
+
+		// D. Priority Directory Boost
+		for _, prioDir := range CurrentSettings.PriorityDirectories {
+			if strings.HasPrefix(lower, strings.ToLower(prioDir)) {
+				score *= 1.5
+			}
 		}
 
 		return score

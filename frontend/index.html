@@ -46,10 +46,43 @@
                 </div>
 
                 <div id="tab-indexing" class="tab-content">
-                    <h2>File Indexing</h2>
+                    <h2>File Indexing & AI Vectors</h2>
+
+                    <div class="setting-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                        <div>
+                            <label style="display:block; font-weight:600;">Ignored Paths (comma separated)</label>
+                            <span style="font-size: 12px; color: var(--text-secondary);">Folders to skip indexing (e.g. node_modules, .git)</span>
+                        </div>
+                        <input type="text" id="set-ignored-paths" class="input-text" style="width: 100%; box-sizing: border-box;">
+                    </div>
+
+                    <div class="setting-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                        <div>
+                            <label style="display:block; font-weight:600;">Allowed Extensions (comma separated)</label>
+                            <span style="font-size: 12px; color: var(--text-secondary);">File types to extract text from (e.g. .txt, .pdf)</span>
+                        </div>
+                        <input type="text" id="set-allowed-extensions" class="input-text" style="width: 100%; box-sizing: border-box;">
+                    </div>
+
+                    <div class="setting-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                        <div>
+                            <label style="display:block; font-weight:600;">Specific Indexed Directories (comma separated)</label>
+                            <span style="font-size: 12px; color: var(--text-secondary);">Only index these exact paths (leave empty to scan all drives)</span>
+                        </div>
+                        <input type="text" id="set-indexed-directories" class="input-text" style="width: 100%; box-sizing: border-box;">
+                    </div>
+
+                    <div class="setting-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                        <div>
+                            <label style="display:block; font-weight:600;">Priority Directories (comma separated)</label>
+                            <span style="font-size: 12px; color: var(--text-secondary);">Files in these paths get a higher search ranking</span>
+                        </div>
+                        <input type="text" id="set-priority-directories" class="input-text" style="width: 100%; box-sizing: border-box;">
+                    </div>
+                    
                     <div class="status-card">
                         <div class="status-header">
-                            <span>Index Build Status</span>
+                            <span id="idx-stage-title"><i class="fa-solid fa-arrows-rotate"></i> Overall Pipeline Status</span>
                             <span id="idx-percent">100%</span>
                         </div>
                         <div class="progress-bar-bg">
@@ -57,7 +90,38 @@
                         </div>
                         <div id="idx-details" class="status-details">System Ready</div>
                     </div>
-                    <button class="btn-primary" onclick="triggerRebuild()">Rebuild Index Now</button>
+
+                    <div class="indexing-stages-grid">
+                        <div class="stage-pill" id="stage-scan">
+                            <span class="stage-dot"></span>
+                            <div class="stage-info">
+                                <div class="stage-name">Phase 1: Drive Discovery</div>
+                                <div class="stage-sub" id="stage-scan-sub">Idle</div>
+                            </div>
+                        </div>
+
+                        <div class="stage-pill" id="stage-content">
+                            <span class="stage-dot"></span>
+                            <div class="stage-info">
+                                <div class="stage-name">Phase 2: Content Extraction</div>
+                                <div class="stage-sub" id="stage-content-sub">Idle</div>
+                            </div>
+                        </div>
+
+                        <div class="stage-pill" id="stage-vectors">
+                            <span class="stage-dot"></span>
+                            <div class="stage-info">
+                                <div class="stage-name">Phase 3: Vector Embeddings</div>
+                                <div class="stage-sub" id="stage-vectors-sub">Idle</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <button class="btn-primary" onclick="triggerRebuild()">
+                            <i class="fa-solid fa-play"></i> Rebuild Index Now
+                        </button>
+                    </div>
                 </div>
 
                 <div id="tab-ai" class="tab-content">
@@ -71,19 +135,38 @@
                         </label>
                     </div>
 
+                    <div class="setting-row">
+                        <div>
+                            <label style="display:block; font-weight:600;">Embedding Model</label>
+                            <span style="font-size: 12px; color: var(--text-secondary);">Select the model used for semantic and multimodal vector search</span>
+                        </div>
+                        <select id="set-ai-model" class="input-select" onchange="onModelSelectChanged(this.value)">
+                            <option value="all-minilm-l6-v2">all-MiniLM-L6-v2 (Text only, 90 MB)</option>
+                            <option value="embeddinggemma-2-q4">EmbeddingGemma 2 Q4 (Multimodal, ~480 MB)</option>
+                        </select>
+                    </div>
+
+                    <div id="model-info-box" class="model-info-box">
+                        <div class="model-info-title" id="model-info-name">all-MiniLM-L6-v2</div>
+                        <div class="model-info-desc" id="model-info-desc">Loading model info...</div>
+                        <div class="model-info-status" id="model-info-badge">Checking status...</div>
+                    </div>
+
                     <div class="status-card">
                         <div class="status-header">
-                            <span>Model Download Status</span>
+                            <span>Download Progress</span>
                             <span id="dl-percent">0%</span>
                         </div>
                         <div class="progress-bar-bg">
                             <div id="dl-bar" class="progress-bar-fill" style="width: 0%"></div>
                         </div>
-                        <div id="dl-details" class="status-details">Waiting for tasks...</div>
+                        <div id="dl-details" class="status-details">Ready</div>
                     </div>
 
                     <div style="display: flex; gap: 10px;">
-                        <button class="btn-secondary" onclick="triggerDownload()">Check & Download Models</button>
+                        <button id="btn-download-model" class="btn-primary" onclick="triggerDownloadModel()">
+                            <i class="fa-solid fa-cloud-arrow-down"></i> Auto-Download Selected Model
+                        </button>
                     </div>
                 </div>
             </div>

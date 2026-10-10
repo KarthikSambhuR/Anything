@@ -2,10 +2,13 @@ export namespace core {
 	
 	export class AppSettings {
 	    embedding_strategy: string;
+	    embedding_model: string;
 	    max_chunks_per_file: number;
 	    hotkey: string;
 	    ignored_paths: string[];
 	    allowed_extensions: string[];
+	    indexed_directories: string[];
+	    priority_directories: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -14,10 +17,33 @@ export namespace core {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.embedding_strategy = source["embedding_strategy"];
+	        this.embedding_model = source["embedding_model"];
 	        this.max_chunks_per_file = source["max_chunks_per_file"];
 	        this.hotkey = source["hotkey"];
 	        this.ignored_paths = source["ignored_paths"];
 	        this.allowed_extensions = source["allowed_extensions"];
+	        this.indexed_directories = source["indexed_directories"];
+	        this.priority_directories = source["priority_directories"];
+	    }
+	}
+	export class ModelInfo {
+	    id: string;
+	    name: string;
+	    description: string;
+	    downloaded: boolean;
+	    size_bytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.downloaded = source["downloaded"];
+	        this.size_bytes = source["size_bytes"];
 	    }
 	}
 	export class SearchResult {

@@ -11,19 +11,34 @@ import (
 )
 
 type WriteCounter struct {
-	Total uint64
+	Total    uint64
+	Expected uint64
+	Label    string
 }
 
 func (wc *WriteCounter) Write(p []byte) (int, error) {
 	n := len(p)
 	wc.Total += uint64(n)
 
-	// EMIT EVENT
-	// Assuming file size is roughly known or just show MB downloaded
-	// For exact percentage, we'd need total size passed in.
-	// For now, let's just emit the raw MB count as "message"
 	mb := wc.Total / 1024 / 1024
-	EmitProgress("download", fmt.Sprintf("Downloading Models... %d MB", mb), -1)
+	percent := -1
+	if wc.Expected > 0 {
+		percent = int((wc.Total * 100) / wc.Expected)
+		if percent > 100 {
+			percent = 100
+		}
+	}
+
+	label := wc.Label
+	if label == "" {
+		label = "Downloading Models..."
+	}
+
+	if percent >= 0 {
+		EmitProgress("download", fmt.Sprintf("%s (%d MB - %d%%)", label, mb, percent), percent)
+	} else {
+		EmitProgress("download", fmt.Sprintf("%s (%d MB)", label, mb), -1)
+	}
 
 	return n, nil
 }
@@ -33,7 +48,7 @@ func (wc *WriteCounter) PrintProgress() {
 	fmt.Printf("\rDownloading... %d MB complete", wc.Total/1024/1024)
 }
 
-func DownloadFile(url string, filepath string) error {
+func DownloadFileWithLabel(url string, filepath string, label string) error {
 	out, err := os.Create(filepath)
 	if err != nil {
 		return err
@@ -50,12 +65,19 @@ func DownloadFile(url string, filepath string) error {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	counter := &WriteCounter{}
+	counter := &WriteCounter{
+		Expected: uint64(resp.ContentLength),
+		Label:    label,
+	}
 	if _, err = io.Copy(out, io.TeeReader(resp.Body, counter)); err != nil {
 		return err
 	}
 	fmt.Print("\n")
 	return nil
+}
+
+func DownloadFile(url string, filepath string) error {
+	return DownloadFileWithLabel(url, filepath, "Downloading...")
 }
 
 func ExtractFileFromZip(zipPath string, targetFile string, destPath string) error {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -9,22 +10,54 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
-//go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	isSettings := false
+	for _, arg := range os.Args {
+		if arg == "-settings" {
+			isSettings = true
+			break
+		}
+	}
+
+	app := NewApp(isSettings)
+
+	if isSettings {
+		err := wails.Run(&options.App{
+			Title:  "Anything Settings",
+			Width:  900,
+			Height: 650,
+			StartHidden: false,
+			Frameless:   true,
+			DisableResize: false,
+			BackgroundColour: &options.RGBA{R: 27, G: 27, B: 36, A: 255},
+			AssetServer: &assetserver.Options{
+				Assets: assets,
+			},
+			OnStartup:  app.startup,
+			OnShutdown: app.shutdown,
+			Bind: []interface{}{app},
+			Windows: &windows.Options{
+				Theme: windows.Dark,
+			},
+		})
+		if err != nil {
+			println("Error:", err.Error())
+		}
+		return
+	}
 
 	err := wails.Run(&options.App{
 		Title:  "Anything",
 		Width:  700,
-		Height: 60, // Start small (Input Bar only)
+		Height: 60,
 
 		StartHidden: true,
 
 		// --- APPEARANCE & BEHAVIOR ---
 		Frameless:     true,
-		DisableResize: true,
+		DisableResize: false,
 		AlwaysOnTop:   true,
 
 		// Transparent background required to control rounded corners in CSS

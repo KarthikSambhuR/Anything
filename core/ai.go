@@ -21,7 +21,17 @@ const (
 	OnnxWinUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"
 	OnnxLinuxUrl = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz"
 	OnnxMacUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-universal2-1.22.0.tgz"
+
+	GemmaBaseUrl = "https://huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/main"
 )
+
+type ModelInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Downloaded  bool   `json:"downloaded"`
+	SizeBytes   int64  `json:"size_bytes"`
+}
 
 func getLibName() string {
 	if runtime.GOOS == "windows" {
@@ -35,6 +45,103 @@ func getLibName() string {
 
 func getModelPath() string { return GetDataPath("model.onnx") }
 func getVocabPath() string { return GetDataPath("vocab.txt") }
+
+func getGemmaFiles() []struct {
+	Subpath  string
+	FileName string
+	Label    string
+} {
+	return []struct {
+		Subpath  string
+		FileName string
+		Label    string
+	}{
+		{"onnx/model_q4.onnx", "gemma_text_q4.onnx", "Gemma 2 Text Model Graph"},
+		{"onnx/model_q4.onnx_data", "gemma_text_q4.onnx_data", "Gemma 2 Text Model Weights"},
+		{"onnx/vision_encoder_q4.onnx", "gemma_vision_q4.onnx", "Gemma 2 Vision Encoder Graph"},
+		{"onnx/vision_encoder_q4.onnx_data", "gemma_vision_q4.onnx_data", "Gemma 2 Vision Weights"},
+		{"onnx/audio_encoder_q4.onnx", "gemma_audio_q4.onnx", "Gemma 2 Audio Encoder Graph"},
+		{"onnx/audio_encoder_q4.onnx_data", "gemma_audio_q4.onnx_data", "Gemma 2 Audio Weights"},
+		{"tokenizer.json", "gemma_tokenizer.json", "Gemma 2 Tokenizer"},
+		{"preprocessor_config.json", "gemma_preprocessor_config.json", "Gemma 2 Preprocessor Config"},
+		{"config.json", "gemma_config.json", "Gemma 2 Architecture Config"},
+	}
+}
+
+func IsModelDownloaded(modelID string) bool {
+	if modelID == "embeddinggemma-2-q4" {
+		for _, f := range getGemmaFiles() {
+			path := GetDataPath(f.FileName)
+			info, err := os.Stat(path)
+			if err != nil || info.Size() == 0 {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Default: all-minilm-l6-v2
+	info1, err1 := os.Stat(getModelPath())
+	info2, err2 := os.Stat(getVocabPath())
+	return err1 == nil && info1.Size() > 0 && err2 == nil && info2.Size() > 0
+}
+
+func GetAvailableModels() []ModelInfo {
+	return []ModelInfo{
+		{
+			ID:          "all-minilm-l6-v2",
+			Name:        "all-MiniLM-L6-v2",
+			Description: "Ultra-fast CPU text embeddings (384-d, ~90 MB). Ideal for quick document search.",
+			Downloaded:  IsModelDownloaded("all-minilm-l6-v2"),
+			SizeBytes:   90 * 1024 * 1024,
+		},
+		{
+			ID:          "embeddinggemma-2-q4",
+			Name:        "EmbeddingGemma 2 (Q4 Multimodal)",
+			Description: "Google's unified multimodal model (768-d, ~480 MB). Natively indexes text, images, video, and audio in one vector space.",
+			Downloaded:  IsModelDownloaded("embeddinggemma-2-q4"),
+			SizeBytes:   480 * 1024 * 1024,
+		},
+	}
+}
+
+func DownloadModelByID(modelID string) error {
+	if modelID == "embeddinggemma-2-q4" {
+		files := getGemmaFiles()
+		totalFiles := len(files)
+		for idx, f := range files {
+			destPath := GetDataPath(f.FileName)
+			if info, err := os.Stat(destPath); err == nil && info.Size() > 0 {
+				continue
+			}
+
+			url := fmt.Sprintf("%s/%s", GemmaBaseUrl, f.Subpath)
+			label := fmt.Sprintf("[%d/%d] %s", idx+1, totalFiles, f.Label)
+			EmitProgress("download", label, (idx*100)/totalFiles)
+			if err := DownloadFileWithLabel(url, destPath, label); err != nil {
+				return fmt.Errorf("failed downloading %s: %w", f.FileName, err)
+			}
+		}
+		EmitProgress("download", "EmbeddingGemma 2 downloaded successfully!", 100)
+		return nil
+	}
+
+	// Default MiniLM
+	if _, err := os.Stat(getModelPath()); os.IsNotExist(err) {
+		EmitProgress("download", "Downloading MiniLM Model...", 20)
+		if err := DownloadFileWithLabel(ModelUrl, getModelPath(), "MiniLM Model"); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(getVocabPath()); os.IsNotExist(err) {
+		EmitProgress("download", "Downloading MiniLM Vocab...", 80)
+		if err := DownloadFileWithLabel(VocabUrl, getVocabPath(), "MiniLM Vocab"); err != nil {
+			return err
+		}
+	}
+	EmitProgress("download", "all-MiniLM-L6-v2 ready!", 100)
+	return nil
+}
 
 func InitAI() {
 	fmt.Println("[AI] Initializing ONNX Runtime...")
@@ -67,10 +174,26 @@ func InitAI() {
 		return
 	}
 
+	// Auto ensure selected model is available
+	currentModel := CurrentSettings.EmbeddingModel
+	if currentModel == "" {
+		currentModel = "all-minilm-l6-v2"
+	}
+
+	if currentModel == "embeddinggemma-2-q4" {
+		if !IsModelDownloaded("embeddinggemma-2-q4") {
+			fmt.Println("⚠️  [AI] EmbeddingGemma 2 selected but not downloaded yet. Run download from Settings.")
+			return
+		}
+		fmt.Println("✅ [AI] EmbeddingGemma 2 detected on disk.")
+		IsAIReady = true
+		return
+	}
+
 	modelPath := getModelPath()
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		fmt.Printf("⚠️  [AI] Downloading model to %s...\n", modelPath)
-		if err := DownloadFile(ModelUrl, modelPath); err != nil {
+		if err := DownloadFileWithLabel(ModelUrl, modelPath, "MiniLM Model"); err != nil {
 			fmt.Printf("❌ [AI Error] Model download failed: %v\n", err)
 			return
 		}
@@ -80,7 +203,7 @@ func InitAI() {
 	vocabPath := getVocabPath()
 	if _, err := os.Stat(vocabPath); os.IsNotExist(err) {
 		fmt.Printf("⚠️  [AI] Downloading vocab to %s...\n", vocabPath)
-		if err := DownloadFile(VocabUrl, vocabPath); err != nil {
+		if err := DownloadFileWithLabel(VocabUrl, vocabPath, "MiniLM Vocab"); err != nil {
 			fmt.Printf("❌ [AI Error] Vocab download failed: %v\n", err)
 			return
 		}

@@ -3,3 +3,5 @@ node_modules
 frontend/dist
 onnxruntime.dll
 index.db
+Anything.exe
+todo.md

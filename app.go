@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image/png"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -30,6 +31,8 @@ const (
 	HWND_NOTOPMOST   = ^uintptr(1) // -2
 	SWP_NOMOVE       = 0x0002
 	SWP_NOSIZE       = 0x0001
+	SWP_NOZORDER     = 0x0004
+	SWP_NOACTIVATE   = 0x0010
 	SWP_SHOWWINDOW   = 0x0040
 	GWL_EXSTYLE      = -20
 	WS_EX_NOACTIVATE = 0x08000000
@@ -61,10 +64,15 @@ type App struct {
 	ourWindowHandle      uintptr
 	ignoreFocusLoss      bool        // NEW: Flag to temporarily ignore focus loss
 	focusLossTimer       *time.Timer // NEW: Timer for delayed focus loss detection
+	isSettings           bool
 }
 
-func NewApp() *App {
-	return &App{}
+func NewApp(isSettings bool) *App {
+	return &App{isSettings: isSettings}
+}
+
+func (a *App) IsSettingsWindow() bool {
+	return a.isSettings
 }
 
 func (a *App) GetThumbnail(path string) string {
@@ -91,6 +99,10 @@ func (a *App) startup(ctx context.Context) {
 	loadExtIcons()
 	core.InitAI()
 	core.InitVision()
+
+	if a.isSettings {
+		return // Settings window does not need hotkeys, tray, or background indexer
+	}
 
 	// Get and store our window handle once
 	ptrTitle, _ := syscall.UTF16PtrFromString("Anything")
@@ -124,6 +136,9 @@ func (a *App) startup(ctx context.Context) {
 	// Start monitoring for focus loss
 	go a.monitorFocusLoss()
 
+	// Start system tray
+	a.startSysTray()
+
 	core.InitTokenizer()
 	core.LoadVectorIndex()
 
@@ -132,6 +147,10 @@ func (a *App) startup(ctx context.Context) {
 		core.RunAppScan()
 
 		drives := core.GetDrives()
+		if len(core.CurrentSettings.IndexedDirectories) > 0 {
+			drives = core.CurrentSettings.IndexedDirectories
+		}
+
 		for _, drive := range drives {
 			core.RunQuickScan(drive)
 		}
@@ -150,35 +169,33 @@ func (a *App) startup(ctx context.Context) {
 	}()
 }
 
+func (a *App) SetWindowSize(width, height int) {
+	if a.ourWindowHandle != 0 {
+		procSetWindowPos.Call(
+			a.ourWindowHandle,
+			0,
+			0, 0,
+			uintptr(width), uintptr(height),
+			SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE,
+		)
+	}
+	if a.ctx != nil {
+		wruntime.WindowSetSize(a.ctx, width, height)
+	}
+}
+
 func (a *App) OpenSettings() {
-	wruntime.WindowSetSize(a.ctx, 900, 600)
-	wruntime.WindowCenter(a.ctx)
-	wruntime.WindowShow(a.ctx)
-	wruntime.EventsEmit(a.ctx, "settings:open")
-
-	a.visibilityMutex.Lock()
-	a.isWindowVisible = true
-	a.ignoreFocusLoss = true // Ignore focus loss temporarily
-	a.visibilityMutex.Unlock()
-
-	// Re-enable focus loss detection after 500ms
-	time.AfterFunc(500*time.Millisecond, func() {
-		a.visibilityMutex.Lock()
-		a.ignoreFocusLoss = false
-		a.visibilityMutex.Unlock()
-		fmt.Println("✅ Focus loss detection enabled")
-	})
+	exePath, _ := os.Executable()
+	cmd := exec.Command(exePath, "-settings")
+	cmd.Start()
+	
+	a.hideWindow()
 }
 
 func (a *App) CloseSettings() {
-	wruntime.WindowSetSize(a.ctx, 700, 60)
-	wruntime.WindowCenter(a.ctx)
-	wruntime.WindowHide(a.ctx)
-
-	a.visibilityMutex.Lock()
-	a.isWindowVisible = false
-	a.ignoreFocusLoss = false
-	a.visibilityMutex.Unlock()
+	if a.isSettings {
+		wruntime.Quit(a.ctx)
+	}
 }
 
 func (a *App) GetSettings() core.AppSettings {
@@ -190,25 +207,50 @@ func (a *App) RebuildIndex() {
 		core.EmitProgress("indexing", "Starting Full Rebuild...", 0)
 
 		drives := core.GetDrives()
+		if len(core.CurrentSettings.IndexedDirectories) > 0 {
+			drives = core.CurrentSettings.IndexedDirectories
+		}
+
 		for i, drive := range drives {
-			pct := (i * 100) / len(drives)
+			pct := (i * 30) / len(drives)
 			core.EmitProgress("indexing", fmt.Sprintf("Scanning %s...", drive), pct)
 			core.RunQuickScan(drive)
 		}
 
-		core.EmitProgress("indexing", "Extracting Content...", 50)
+		core.EmitProgress("indexing", "Extracting Content...", 35)
 		core.RunDeepScan()
 
-		core.EmitProgress("indexing", "Complete", 100)
+		core.EmitProgress("indexing", "Embedding Vectors...", 70)
+		core.RunEmbeddingScan()
+
+		core.LoadVectorIndex()
+		core.EmitProgress("indexing", "All Indexing & AI Embeddings Complete", 100)
+	}()
+}
+
+func (a *App) GetAvailableModels() []core.ModelInfo {
+	return core.GetAvailableModels()
+}
+
+func (a *App) DownloadModel(modelID string) {
+	go func() {
+		core.EmitProgress("download", "Starting download...", 0)
+		if err := core.DownloadModelByID(modelID); err != nil {
+			core.EmitProgress("download", fmt.Sprintf("Error: %v", err), -1)
+			return
+		}
+		core.InitAI()
 	}()
 }
 
 func (a *App) DownloadModels() {
 	go func() {
-		core.EmitProgress("download", "Checking Models...", 0)
-		core.InitAI()
+		current := core.CurrentSettings.EmbeddingModel
+		if current == "" {
+			current = "all-minilm-l6-v2"
+		}
+		a.DownloadModel(current)
 		core.InitVision()
-		core.EmitProgress("download", "All Models Ready", 100)
 	}()
 }
 
@@ -232,9 +274,7 @@ func (a *App) hideWindow() {
 	a.isWindowVisible = false
 	a.ignoreFocusLoss = false
 
-	// 2. THE FIX: Reset Geometry while hidden
-	// This ensures next time it opens, it's already the correct size and centered.
-	wruntime.WindowSetSize(a.ctx, 700, 60)
+	// 2. Center window while hidden
 	wruntime.WindowCenter(a.ctx)
 
 	// Cancel any pending focus loss timer
@@ -427,15 +467,27 @@ func loadExtIcons() {
 	}
 }
 
+func (a *App) SetHeight(height int) {
+	a.SetWindowSize(700, height)
+}
+
 func (a *App) Search(query string) []core.SearchResult {
 	if query == "" {
 		return []core.SearchResult{}
 	}
 
-	results, _ := core.HybridSearch(query)
+	lowerQ := strings.TrimSpace(strings.ToLower(query))
+	isSettings := strings.Contains("settings", lowerQ) ||
+		strings.Contains(lowerQ, "setting") ||
+		strings.Contains(lowerQ, "config") ||
+		strings.Contains(lowerQ, "pref")
 
-	lowerQ := strings.ToLower(query)
-	if strings.Contains("settings", lowerQ) || strings.Contains("config", lowerQ) {
+	results, _ := core.HybridSearch(query)
+	if results == nil {
+		results = []core.SearchResult{}
+	}
+
+	if isSettings {
 		settingsRes := core.SearchResult{
 			Path:      "anything://settings",
 			Snippet:   "Configure AI, Indexing, and Hotkeys",
@@ -451,10 +503,29 @@ func (a *App) Search(query string) []core.SearchResult {
 			continue
 		}
 		ext := strings.ToLower(results[i].Extension)
+		
+		if ext == ".exe" || ext == ".lnk" {
+			icon := core.GetAppIconBase64(results[i].Path)
+			if icon != "" {
+				results[i].IconData = icon
+				continue
+			}
+		}
+
 		if icon, ok := extIconCache[ext]; ok {
 			results[i].IconData = icon
 		}
 	}
+
+	fmt.Printf("🔎 [SEARCH] Query: '%s' | Total Results: %d\n", query, len(results))
+	for i, r := range results {
+		if i >= 5 {
+			fmt.Printf("   ... and %d more\n", len(results)-5)
+			break
+		}
+		fmt.Printf("   [%d] Path: %s (Score: %.2f)\n", i+1, r.Path, r.Score)
+	}
+
 	return results
 }
 

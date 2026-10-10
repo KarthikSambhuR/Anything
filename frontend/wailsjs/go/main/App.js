@@ -6,8 +6,16 @@ export function CloseSettings() {
   return window['go']['main']['App']['CloseSettings']();
 }
 
+export function DownloadModel(arg1) {
+  return window['go']['main']['App']['DownloadModel'](arg1);
+}
+
 export function DownloadModels() {
   return window['go']['main']['App']['DownloadModels']();
+}
+
+export function GetAvailableModels() {
+  return window['go']['main']['App']['GetAvailableModels']();
 }
 
 export function GetSettings() {
@@ -16,6 +24,10 @@ export function GetSettings() {
 
 export function GetThumbnail(arg1) {
   return window['go']['main']['App']['GetThumbnail'](arg1);
+}
+
+export function IsSettingsWindow() {
+  return window['go']['main']['App']['IsSettingsWindow']();
 }
 
 export function OnHide() {
@@ -40,4 +52,12 @@ export function SaveSettings(arg1) {
 
 export function Search(arg1) {
   return window['go']['main']['App']['Search'](arg1);
+}
+
+export function SetHeight(arg1) {
+  return window['go']['main']['App']['SetHeight'](arg1);
+}
+
+export function SetWindowSize(arg1, arg2) {
+  return window['go']['main']['App']['SetWindowSize'](arg1, arg2);
 }
