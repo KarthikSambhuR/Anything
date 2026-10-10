@@ -205,8 +205,66 @@ window.switchTab = (tabName) => {
 
     if (tabName === 'ai') {
         refreshModelList();
+    } else if (tabName === 'apps') {
+        loadApps();
     }
 };
+
+async function loadApps() {
+    const container = document.getElementById('apps-list-container');
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div style="padding: 20px; text-align: center; color: var(--text-secondary); grid-column: 1 / -1;">
+            <i class="fa-solid fa-circle-notch fa-spin" style="margin-right: 8px;"></i> Loading applications...
+        </div>`;
+        
+    try {
+        const apps = await window.go.main.App.GetIndexedApplications();
+        if (!apps || apps.length === 0) {
+            container.innerHTML = `
+                <div style="padding: 20px; text-align: center; color: var(--text-secondary); grid-column: 1 / -1;">
+                    <i class="fa-solid fa-ghost" style="margin-right: 8px;"></i> No applications found in index yet.
+                </div>`;
+            return;
+        }
+        
+        container.innerHTML = '';
+        apps.forEach(app => {
+            const card = document.createElement('div');
+            card.className = 'app-card';
+            
+            const separator = app.Path.includes('\\') ? '\\' : '/';
+            const parts = app.Path.split(separator);
+            const name = parts.pop() || app.Path;
+            const dir = parts.join(separator);
+            
+            let iconHtml = '';
+            if (app.IconData && app.IconData.startsWith("data:")) {
+                iconHtml = `<img src="${app.IconData}" class="app-card-icon" />`;
+            } else {
+                iconHtml = `<div class="app-card-icon-placeholder"><i class="fa-brands fa-windows"></i></div>`;
+            }
+            
+            card.innerHTML = `
+                ${iconHtml}
+                <div class="app-card-name" title="${name}">${escapeHtml(name)}</div>
+                <div class="app-card-path" title="${dir}">${escapeHtml(dir)}</div>
+            `;
+            
+            card.onclick = () => window.go.main.App.OpenFile(app.Path);
+            card.style.cursor = 'pointer';
+            
+            container.appendChild(card);
+        });
+    } catch (e) {
+        console.error("Failed to load apps:", e);
+        container.innerHTML = `
+            <div style="padding: 20px; text-align: center; color: #f38ba8; grid-column: 1 / -1;">
+                <i class="fa-solid fa-triangle-exclamation" style="margin-right: 8px;"></i> Error loading applications.
+            </div>`;
+    }
+}
 
 window.triggerRebuild = () => {
     window.go.main.App.RebuildIndex();

@@ -10,6 +10,8 @@ export function DownloadModels():Promise<void>;
 
 export function GetAvailableModels():Promise<Array<core.ModelInfo>>;
 
+export function GetIndexedApplications():Promise<Array<core.SearchResult>>;
+
 export function GetSettings():Promise<core.AppSettings>;
 
 export function GetThumbnail(arg1:string):Promise<string>;

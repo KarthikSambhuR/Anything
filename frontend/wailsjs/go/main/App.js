@@ -18,6 +18,10 @@ export function GetAvailableModels() {
   return window['go']['main']['App']['GetAvailableModels']();
 }
 
+export function GetIndexedApplications() {
+  return window['go']['main']['App']['GetIndexedApplications']();
+}
+
 export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }

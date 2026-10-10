@@ -34,6 +34,9 @@
                 <div class="nav-item" onclick="switchTab('ai')">
                     <i class="fa-solid fa-robot"></i> AI & Models
                 </div>
+                <div class="nav-item" onclick="switchTab('apps')">
+                    <i class="fa-solid fa-shapes"></i> Applications
+                </div>
             </div>
 
             <div class="content-area">
@@ -167,6 +170,18 @@
                         <button id="btn-download-model" class="btn-primary" onclick="triggerDownloadModel()">
                             <i class="fa-solid fa-cloud-arrow-down"></i> Auto-Download Selected Model
                         </button>
+                    </div>
+                </div>
+
+                <div id="tab-apps" class="tab-content">
+                    <h2>Indexed Applications</h2>
+                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 15px;">
+                        These are all the executables and shortcuts Currently discovered and indexed.
+                    </p>
+                    <div id="apps-list-container" class="apps-grid">
+                        <div style="padding: 20px; text-align: center; color: var(--text-secondary);">
+                            <i class="fa-solid fa-circle-notch fa-spin" style="margin-right: 8px;"></i> Loading applications...
+                        </div>
                     </div>
                 </div>
             </div>

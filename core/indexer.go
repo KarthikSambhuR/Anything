@@ -58,6 +58,20 @@ func cleanText(raw string, isXml bool) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
+// --- BAIT LOGIC ---
+func IsHumanFolder(path string) bool {
+	lower := strings.ToLower(path)
+	if strings.Contains(lower, "\\desktop\\") ||
+		strings.Contains(lower, "\\documents\\") ||
+		strings.Contains(lower, "\\downloads\\") ||
+		strings.Contains(lower, "\\pictures\\") ||
+		strings.Contains(lower, "\\videos\\") ||
+		strings.Contains(lower, "\\music\\") {
+		return true
+	}
+	return false
+}
+
 // --- WHITELIST ---
 func isContentReadable(ext string) bool {
 	e := strings.ToLower(ext)
@@ -334,6 +348,8 @@ func RunDeepScan() {
 	updateStmt, _ := tx.Prepare("UPDATE files SET summary = ? WHERE path = ?")
 	defer updateStmt.Close()
 
+	usageMap := GetUsageMap()
+
 	for _, path := range pendingFiles {
 		processedCount++
 
@@ -342,6 +358,15 @@ func RunDeepScan() {
 
 		if processedCount%20 == 0 || processedCount == total {
 			EmitProgress("indexing", fmt.Sprintf("Reading [%d / %d]: %s", processedCount, total, truncateString(filepath.Base(path), 30)), 35+(percent*35)/100)
+		}
+
+		// Bait Check: If not a human folder and never clicked, mark as BAIT and skip
+		if !IsHumanFolder(path) && usageMap[path] == 0 {
+			_, err := updateStmt.Exec("[BAIT]", path)
+			if err != nil {
+				fmt.Printf("\nError saving bait %s: %v\n", path, err)
+			}
+			continue
 		}
 
 		content := getContentWithTimeout(path)
@@ -361,6 +386,56 @@ func RunDeepScan() {
 	tx.Commit()
 	fmt.Printf("\nPHASE 2 Complete! Extracted text from %d files in %v\n", processedCount, time.Since(startTime))
 	EmitProgress("indexing", fmt.Sprintf("Phase 2 Complete: Extracted text from %d files", processedCount), 70)
+}
+
+func RunJITScan(path string) {
+	var summary string
+	err := DB.QueryRow("SELECT summary FROM files WHERE path = ?", path).Scan(&summary)
+	if err != nil {
+		return
+	}
+	
+	if summary != "[BAIT]" {
+		return // Already scanned
+	}
+
+	fmt.Printf("\n🎯 [JIT] Trap Sprung! Extracting & embedding bait file: %s\n", path)
+
+	content := getContentWithTimeout(path)
+	DB.Exec("UPDATE files SET summary = ? WHERE path = ?", content, path)
+
+	var id int
+	DB.QueryRow("SELECT id FROM files WHERE path = ?", path).Scan(&id)
+
+	if content == "[IMAGE_MULTIMODAL]" {
+		vec, err := GetImageEmbedding(path)
+		if err == nil {
+			SaveVector(id, 0, vec)
+		}
+		return
+	}
+
+	maxChunks := CurrentSettings.MaxChunksPerFile
+	if maxChunks < 1 {
+		maxChunks = 1
+	}
+
+	var chunks []string
+	if CurrentSettings.EmbeddingStrategy == "simple" {
+		chunks = []string{content}
+	} else {
+		chunks = chunkText(content, maxChunks)
+	}
+
+	for i, segment := range chunks {
+		if len(segment) < 10 {
+			continue
+		}
+		vec, err := GetEmbedding(segment)
+		if err == nil {
+			SaveVector(id, i, vec)
+		}
+	}
 }
 
 func chunkText(text string, maxChunks int) []string {

@@ -232,6 +232,30 @@ func (a *App) GetAvailableModels() []core.ModelInfo {
 	return core.GetAvailableModels()
 }
 
+func (a *App) GetIndexedApplications() []core.SearchResult {
+	apps, err := core.GetIndexedApplications()
+	if err != nil {
+		return []core.SearchResult{}
+	}
+	
+	// Hydrate with icons if missing
+	for i := range apps {
+		if apps[i].IconData == "" {
+			icon := core.GetAppIconBase64(apps[i].Path)
+			if icon != "" {
+				apps[i].IconData = icon
+				// Optionally update DB to cache it here, but it's fine
+			} else {
+				if icon, ok := extIconCache[strings.ToLower(apps[i].Extension)]; ok {
+					apps[i].IconData = icon
+				}
+			}
+		}
+	}
+	
+	return apps
+}
+
 func (a *App) DownloadModel(modelID string) {
 	go func() {
 		core.EmitProgress("download", "Starting download...", 0)
@@ -537,6 +561,7 @@ func (a *App) OpenFile(path string) {
 
 	fmt.Printf("Opening: %s\n", path)
 	go core.IncrementUsage(path)
+	go core.RunJITScan(path) // <--- JIT TRAP SPRINGS HERE
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {

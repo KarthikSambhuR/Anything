@@ -153,7 +153,7 @@ type FileData struct {
 }
 
 func GetFilesNeedingEmbedding() (map[int]FileData, error) {
-	query := `SELECT id, path, summary FROM files WHERE summary IS NOT NULL AND summary != "" AND id NOT IN (SELECT distinct file_id FROM file_vectors)`
+	query := `SELECT id, path, summary FROM files WHERE summary IS NOT NULL AND summary != "" AND summary != "[BAIT]" AND id NOT IN (SELECT distinct file_id FROM file_vectors)`
 	rows, err := DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -245,6 +245,26 @@ func SearchFiles(queryText string, minTime int64, maxTime int64) ([]SearchResult
 		}
 		// Invert rank (FTS returns negative for better matches) and scale
 		res.Score = float32(math.Abs(float64(rank))) * 1.5
+		results = append(results, res)
+	}
+	return results, nil
+}
+
+func GetIndexedApplications() ([]SearchResult, error) {
+	query := `SELECT path, filename, COALESCE(icon_data, ''), extension FROM files WHERE extension IN ('.exe', '.lnk') ORDER BY filename ASC`
+	rows, err := DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []SearchResult
+	for rows.Next() {
+		var res SearchResult
+		if err := rows.Scan(&res.Path, &res.Snippet, &res.IconData, &res.Extension); err != nil {
+			continue
+		}
+		// res.Snippet is hijacking the filename field for display purposes here
 		results = append(results, res)
 	}
 	return results, nil
