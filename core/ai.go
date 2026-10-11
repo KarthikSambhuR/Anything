@@ -7,8 +7,11 @@ import (
 	_ "image/png"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"syscall"
 
 	"github.com/yalue/onnxruntime_go"
 	"golang.org/x/image/draw"
@@ -216,10 +219,21 @@ func InitAI() {
 		var textSession *onnxruntime_go.DynamicAdvancedSession
 		var errText error
 
-		// Attempt GPU acceleration via DirectML (DirectX 12 on NVIDIA RTX 4050 / Windows GPU)
+		// Determine target GPU adapter (discrete NVIDIA/AMD GPU preferred over integrated Intel GPU)
+		targetDeviceID := CurrentSettings.GpuDeviceID
+		gpuName := "Auto"
+		if targetDeviceID < 0 {
+			targetDeviceID, gpuName = detectDedicatedGpuDeviceID()
+		} else {
+			gpuName = fmt.Sprintf("Adapter %d", targetDeviceID)
+		}
+
+		fmt.Printf("[AI] Targeting GPU Adapter %d: %s\n", targetDeviceID, gpuName)
+
+		// Attempt GPU acceleration via DirectML on selected adapter
 		gpuOpts, errGpu := onnxruntime_go.NewSessionOptions()
 		if errGpu == nil {
-			if errDml := gpuOpts.AppendExecutionProviderDirectML(0); errDml == nil {
+			if errDml := gpuOpts.AppendExecutionProviderDirectML(targetDeviceID); errDml == nil {
 				textSession, errText = onnxruntime_go.NewDynamicAdvancedSession(
 					textModelPath,
 					[]string{"input_ids", "attention_mask", "image_features", "video_features", "audio_features"},
@@ -227,10 +241,12 @@ func InitAI() {
 					gpuOpts,
 				)
 				if errText == nil {
-					fmt.Println("🚀 [AI] Gemma 2 Text Model running on GPU (DirectML - RTX 4050)!")
+					fmt.Printf("🚀 [AI] Gemma 2 Text Model running on GPU (DirectML - %s [Device %d])!\n", gpuName, targetDeviceID)
 				} else {
-					fmt.Printf("⚠️  [AI] DirectML GPU initialization failed: %v. Using CPU.\n", errText)
+					fmt.Printf("⚠️  [AI] DirectML GPU initialization failed on device %d: %v. Using CPU.\n", targetDeviceID, errText)
 				}
+			} else {
+				fmt.Printf("⚠️  [AI] DirectML EP creation failed on device %d: %v. Using CPU.\n", targetDeviceID, errDml)
 			}
 			gpuOpts.Destroy()
 		}
@@ -305,6 +321,42 @@ func CloseAI() {
 		ORT_GemmaVisionSession.Destroy()
 	}
 	onnxruntime_go.DestroyEnvironment()
+}
+
+func detectDedicatedGpuDeviceID() (int, string) {
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, "Default GPU"
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var gpus []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" {
+			gpus = append(gpus, trimmed)
+		}
+	}
+
+	// Look for discrete GPU (NVIDIA / AMD Radeon / Intel Arc)
+	for idx, name := range gpus {
+		lower := strings.ToLower(name)
+		if strings.Contains(lower, "nvidia") || strings.Contains(lower, "geforce") ||
+			strings.Contains(lower, "rtx") || strings.Contains(lower, "gtx") ||
+			strings.Contains(lower, "radeon") || strings.Contains(lower, "arc") {
+			return idx, name
+		}
+	}
+
+	if len(gpus) > 0 {
+		return 0, gpus[0]
+	}
+	return 0, "Default GPU"
 }
 
 func downloadOnnxRuntime(targetLibName string) error {

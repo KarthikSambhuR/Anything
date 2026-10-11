@@ -14,6 +14,9 @@ type AppSettings struct {
 	EmbeddingModel string `json:"embedding_model"`
 	AIEnabled      bool   `json:"ai_enabled"`
 
+	// GPU adapter ID for DirectML (-1 = auto-detect discrete/NVIDIA GPU)
+	GpuDeviceID int `json:"gpu_device_id"`
+
 	// Max vectors per file (Only used in "accurate" mode)
 	MaxChunksPerFile int    `json:"max_chunks_per_file"`
 	Hotkey           string `json:"hotkey"`
@@ -31,6 +34,7 @@ func getDefaultSettings() AppSettings {
 		EmbeddingStrategy: "simple",
 		EmbeddingModel:    "embeddinggemma-2-q4",
 		AIEnabled:         true,
+		GpuDeviceID:       -1,
 		MaxChunksPerFile:  15,
 		Hotkey:            "Alt+Space",
 		IgnoredPaths: []string{
@@ -67,6 +71,10 @@ func LoadSettings() {
 	}
 	if CurrentSettings.EmbeddingModel == "" || CurrentSettings.EmbeddingModel == "all-minilm-l6-v2" {
 		CurrentSettings.EmbeddingModel = "embeddinggemma-2-q4"
+		SaveSettings()
+	}
+	if CurrentSettings.GpuDeviceID == 0 {
+		CurrentSettings.GpuDeviceID = -1
 		SaveSettings()
 	}
 	fmt.Println("Settings loaded.")
