@@ -5,3 +5,7 @@ onnxruntime.dll
 index.db
 Anything.exe
 todo.md
+onnx_1.19.zip
+DirectML.dll
+*.db-wal
+*.db-shm

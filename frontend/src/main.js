@@ -46,6 +46,11 @@ window.runtime.EventsOn("settings:open", async () => {
     document.getElementById('set-allowed-extensions').value = (settings.allowed_extensions || []).join(", ");
     document.getElementById('set-indexed-directories').value = (settings.indexed_directories || []).join(", ");
     document.getElementById('set-priority-directories').value = (settings.priority_directories || []).join(", ");
+    
+    const aiToggle = document.getElementById('set-ai-enabled');
+    if (aiToggle) {
+        aiToggle.checked = settings.ai_enabled !== false; // true by default
+    }
 
     await refreshModelList();
 
@@ -111,6 +116,12 @@ window.triggerDownloadModel = () => {
     const select = document.getElementById('set-ai-model');
     const modelId = select ? select.value : "all-minilm-l6-v2";
     window.go.main.App.DownloadModel(modelId);
+};
+
+window.toggleAI = async (el) => {
+    const settings = await window.go.main.App.GetSettings();
+    settings.ai_enabled = el.checked;
+    await window.go.main.App.SaveSettings(settings);
 };
 
 // Progress Events (Indexing & Download)
@@ -234,10 +245,22 @@ async function loadApps() {
             const card = document.createElement('div');
             card.className = 'app-card';
             
-            const separator = app.Path.includes('\\') ? '\\' : '/';
-            const parts = app.Path.split(separator);
-            const name = parts.pop() || app.Path;
-            const dir = parts.join(separator);
+            // Clean display name
+            let appName = (app.Snippet || app.Path).trim();
+            appName = appName.replace(/\.(lnk|exe|url)$/i, '');
+
+            // Subtitle: Publisher / Version / Clean category
+            let subtitle = (app.Extension || '').trim();
+            if (!subtitle || subtitle === '.exe' || subtitle === '.lnk') {
+                if (app.Path.startsWith('shell:AppsFolder')) {
+                    subtitle = 'Windows App';
+                } else {
+                    const separator = app.Path.includes('\\') ? '\\' : '/';
+                    const parts = app.Path.split(separator);
+                    parts.pop();
+                    subtitle = parts.pop() || 'Application';
+                }
+            }
             
             let iconHtml = '';
             if (app.IconData && app.IconData.startsWith("data:")) {
@@ -248,8 +271,8 @@ async function loadApps() {
             
             card.innerHTML = `
                 ${iconHtml}
-                <div class="app-card-name" title="${name}">${escapeHtml(name)}</div>
-                <div class="app-card-path" title="${dir}">${escapeHtml(dir)}</div>
+                <div class="app-card-name" title="${escapeHtml(appName)}">${escapeHtml(appName)}</div>
+                <div class="app-card-path" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</div>
             `;
             
             card.onclick = () => window.go.main.App.OpenFile(app.Path);

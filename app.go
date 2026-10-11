@@ -97,8 +97,8 @@ func (a *App) startup(ctx context.Context) {
 	core.InitDB("./index.db")
 	core.LoadSettings()
 	loadExtIcons()
+	core.InitTokenizer()
 	core.InitAI()
-	core.InitVision()
 
 	if a.isSettings {
 		return // Settings window does not need hotkeys, tray, or background indexer
@@ -139,7 +139,6 @@ func (a *App) startup(ctx context.Context) {
 	// Start system tray
 	a.startSysTray()
 
-	core.InitTokenizer()
 	core.LoadVectorIndex()
 
 	// BACKGROUND INDEXING SEQUENCE
@@ -205,6 +204,8 @@ func (a *App) GetSettings() core.AppSettings {
 func (a *App) RebuildIndex() {
 	go func() {
 		core.EmitProgress("indexing", "Starting Full Rebuild...", 0)
+
+		core.RunAppScan()
 
 		drives := core.GetDrives()
 		if len(core.CurrentSettings.IndexedDirectories) > 0 {

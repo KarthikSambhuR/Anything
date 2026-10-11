@@ -166,7 +166,7 @@ func getContentWithTimeout(path string) string {
 			res = readPdfContent(path)
 		case ".docx":
 			res = readDocxContent(path)
-		case ".jpg", ".jpeg", ".png", ".webp":
+		case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp":
 			if CurrentSettings.EmbeddingModel == "embeddinggemma-2-q4" {
 				res = "[IMAGE_MULTIMODAL]"
 			} else {
@@ -411,6 +411,8 @@ func RunJITScan(path string) {
 		vec, err := GetImageEmbedding(path)
 		if err == nil {
 			SaveVector(id, 0, vec)
+		} else {
+			fmt.Printf("Vision AI Error on %s: %v\n", path, err)
 		}
 		return
 	}

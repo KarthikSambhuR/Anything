@@ -2,27 +2,31 @@ package core
 
 import (
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	"github.com/yalue/onnxruntime_go"
+	"golang.org/x/image/draw"
 )
 
 var (
 	ORT_Session            *onnxruntime_go.DynamicSession[int64, float32]
-	ORT_GemmaTextSession   *onnxruntime_go.DynamicSession[int64, float32]
-	ORT_GemmaVisionSession *onnxruntime_go.DynamicSession[float32, float32]
+	ORT_GemmaTextSession   *onnxruntime_go.DynamicAdvancedSession
+	ORT_GemmaVisionSession *onnxruntime_go.DynamicAdvancedSession
 	IsAIReady              bool = false
 )
 
 const (
 	ModelUrl     = "https://huggingface.co/optimum/all-MiniLM-L6-v2/resolve/main/model.onnx"
 	VocabUrl     = "https://huggingface.co/optimum/all-MiniLM-L6-v2/raw/main/vocab.txt"
-	OnnxWinUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"
-	OnnxLinuxUrl = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz"
-	OnnxMacUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-universal2-1.22.0.tgz"
+	OnnxWinUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-win-x64-1.31.0.zip"
+	OnnxLinuxUrl = "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-linux-x64-1.31.0.tgz"
+	OnnxMacUrl   = "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-osx-universal2-1.31.0.tgz"
 
 	GemmaBaseUrl = "https://huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/main"
 )
@@ -58,14 +62,14 @@ func getGemmaFiles() []struct {
 		FileName string
 		Label    string
 	}{
-		{"onnx/model_q4.onnx", "gemma_text_q4.onnx", "Gemma 2 Text Model Graph"},
-		{"onnx/model_q4.onnx_data", "gemma_text_q4.onnx_data", "Gemma 2 Text Model Weights"},
-		{"onnx/vision_encoder_q4.onnx", "gemma_vision_q4.onnx", "Gemma 2 Vision Encoder Graph"},
-		{"onnx/vision_encoder_q4.onnx_data", "gemma_vision_q4.onnx_data", "Gemma 2 Vision Weights"},
-		{"onnx/audio_encoder_q4.onnx", "gemma_audio_q4.onnx", "Gemma 2 Audio Encoder Graph"},
-		{"onnx/audio_encoder_q4.onnx_data", "gemma_audio_q4.onnx_data", "Gemma 2 Audio Weights"},
+		{"onnx/model_quantized.onnx", "model_quantized.onnx", "Gemma 2 Text Model Graph"},
+		{"onnx/model_quantized.onnx_data", "model_quantized.onnx_data", "Gemma 2 Text Model Weights"},
+		{"onnx/vision_encoder_quantized.onnx", "vision_encoder_quantized.onnx", "Gemma 2 Vision Encoder Graph"},
+		{"onnx/vision_encoder_quantized.onnx_data", "vision_encoder_quantized.onnx_data", "Gemma 2 Vision Weights"},
+		{"onnx/audio_encoder_quantized.onnx", "audio_encoder_quantized.onnx", "Gemma 2 Audio Encoder Graph"},
+		{"onnx/audio_encoder_quantized.onnx_data", "audio_encoder_quantized.onnx_data", "Gemma 2 Audio Weights"},
 		{"tokenizer.json", "gemma_tokenizer.json", "Gemma 2 Tokenizer"},
-		{"preprocessor_config.json", "gemma_preprocessor_config.json", "Gemma 2 Preprocessor Config"},
+		{"processor_config.json", "processor_config.json", "Gemma 2 Processor Config"},
 		{"config.json", "gemma_config.json", "Gemma 2 Architecture Config"},
 	}
 }
@@ -91,18 +95,18 @@ func IsModelDownloaded(modelID string) bool {
 func GetAvailableModels() []ModelInfo {
 	return []ModelInfo{
 		{
+			ID:          "embeddinggemma-2-q4",
+			Name:        "EmbeddingGemma 2 (Q4 Multimodal)",
+			Description: "Google's unified multimodal model (768-d). Natively indexes text, images, video, and audio in one vector space.",
+			Downloaded:  IsModelDownloaded("embeddinggemma-2-q4"),
+			SizeBytes:   480 * 1024 * 1024,
+		},
+		{
 			ID:          "all-minilm-l6-v2",
 			Name:        "all-MiniLM-L6-v2",
 			Description: "Ultra-fast CPU text embeddings (384-d, ~90 MB). Ideal for quick document search.",
 			Downloaded:  IsModelDownloaded("all-minilm-l6-v2"),
 			SizeBytes:   90 * 1024 * 1024,
-		},
-		{
-			ID:          "embeddinggemma-2-q4",
-			Name:        "EmbeddingGemma 2 (Q4 Multimodal)",
-			Description: "Google's unified multimodal model (768-d, ~480 MB). Natively indexes text, images, video, and audio in one vector space.",
-			Downloaded:  IsModelDownloaded("embeddinggemma-2-q4"),
-			SizeBytes:   480 * 1024 * 1024,
 		},
 	}
 }
@@ -148,9 +152,7 @@ func DownloadModelByID(modelID string) error {
 func InitAI() {
 	fmt.Println("[AI] Initializing ONNX Runtime...")
 
-	// We keep the DLL in the local folder (next to .exe) to avoid Antivirus issues with AppData execution
 	libName := getLibName()
-
 	if _, err := os.Stat(libName); os.IsNotExist(err) {
 		fmt.Printf("⚠️  [AI] %s not found. Auto-downloading...\n", libName)
 		if err := downloadOnnxRuntime(libName); err != nil {
@@ -160,7 +162,6 @@ func InitAI() {
 		fmt.Println("✅ [AI] Runtime library downloaded.")
 	}
 
-	// Important: Use Absolute Path for DLL to prevent Windows loading a wrong version from System32
 	absLibPath, err := filepath.Abs(libName)
 	if err != nil {
 		fmt.Printf("❌ [AI Error] Could not determine absolute path: %v\n", err)
@@ -176,48 +177,62 @@ func InitAI() {
 		return
 	}
 
-	// Auto ensure selected model is available
 	currentModel := CurrentSettings.EmbeddingModel
 	if currentModel == "" {
-		currentModel = "all-minilm-l6-v2"
+		currentModel = "embeddinggemma-2-q4"
+		CurrentSettings.EmbeddingModel = currentModel
 	}
 
 	if currentModel == "embeddinggemma-2-q4" {
 		if !IsModelDownloaded("embeddinggemma-2-q4") {
-			fmt.Println("⚠️  [AI] EmbeddingGemma 2 selected but not downloaded yet. Run download from Settings.")
-			return
+			fmt.Println("⚠️  [AI] EmbeddingGemma 2 files missing. Auto-downloading now...")
+			if err := DownloadModelByID("embeddinggemma-2-q4"); err != nil {
+				fmt.Printf("❌ [AI Error] Gemma download failed: %v\n", err)
+				return
+			}
 		}
-		
+
 		fmt.Println("✅ [AI] EmbeddingGemma 2 detected. Loading Text and Vision graphs...")
 
-		textSession, err1 := onnxruntime_go.NewDynamicSession[int64, float32](
-			GetDataPath("gemma_text_q4.onnx"),
-			[]string{"input_ids", "attention_mask"},
-			[]string{"last_hidden_state"},
+		origDir, _ := os.Getwd()
+		appDir := GetDataDir()
+		_ = os.Chdir(appDir)
+		defer os.Chdir(origDir)
+
+		visionModelPath := GetDataPath("vision_encoder_quantized.onnx")
+		textModelPath := GetDataPath("model_quantized.onnx")
+
+		visionSession, errVision := onnxruntime_go.NewDynamicAdvancedSession(
+			visionModelPath,
+			[]string{"pixel_values", "pixel_position_ids"},
+			[]string{"image_features"},
+			nil,
 		)
-		if err1 != nil {
-			fmt.Printf("❌ [AI Error] Failed to load Gemma Text model: %v\n", err1)
+		if errVision != nil {
+			fmt.Printf("❌ [AI Error] Failed to load Gemma Vision model: %v\n", errVision)
 			return
 		}
 
-		visionSession, err2 := onnxruntime_go.NewDynamicSession[float32, float32](
-			GetDataPath("gemma_vision_q4.onnx"),
-			[]string{"pixel_values"},
-			[]string{"last_hidden_state"},
+		textSession, errText := onnxruntime_go.NewDynamicAdvancedSession(
+			textModelPath,
+			[]string{"input_ids", "attention_mask", "image_features", "video_features", "audio_features"},
+			[]string{"sentence_embedding"},
+			nil,
 		)
-		if err2 != nil {
-			fmt.Printf("❌ [AI Error] Failed to load Gemma Vision model: %v\n", err2)
-			textSession.Destroy()
+		if errText != nil {
+			fmt.Printf("❌ [AI Error] Failed to load Gemma Text model: %v\n", errText)
+			visionSession.Destroy()
 			return
 		}
 
-		ORT_GemmaTextSession = textSession
 		ORT_GemmaVisionSession = visionSession
+		ORT_GemmaTextSession = textSession
 		IsAIReady = true
-		fmt.Println("✅ [AI] Gemma 2 Multimodal Engine Ready.")
+		fmt.Println("✅ [AI] Gemma 2 Multimodal Engine Ready (Text + Vision).")
 		return
 	}
 
+	// MiniLM path
 	modelPath := getModelPath()
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		fmt.Printf("⚠️  [AI] Downloading model to %s...\n", modelPath)
@@ -225,7 +240,6 @@ func InitAI() {
 			fmt.Printf("❌ [AI Error] Model download failed: %v\n", err)
 			return
 		}
-		fmt.Println("✅ [AI] Model downloaded.")
 	}
 
 	vocabPath := getVocabPath()
@@ -235,7 +249,6 @@ func InitAI() {
 			fmt.Printf("❌ [AI Error] Vocab download failed: %v\n", err)
 			return
 		}
-		fmt.Println("✅ [AI] Vocab downloaded.")
 	}
 
 	inputNames := []string{"input_ids", "attention_mask", "token_type_ids"}
@@ -247,13 +260,13 @@ func InitAI() {
 		outputNames,
 	)
 	if err != nil {
-		fmt.Printf("❌ [AI Error] Failed to load model: %v\n", err)
+		fmt.Printf("❌ [AI Error] Failed to load MiniLM model: %v\n", err)
 		return
 	}
 
 	ORT_Session = session
 	IsAIReady = true
-	fmt.Println("✅ [AI] Semantic Engine Ready.")
+	fmt.Println("✅ [AI] MiniLM Engine Ready.")
 }
 
 func CloseAI() {
@@ -305,10 +318,76 @@ func GetEmbedding(text string) ([]float32, error) {
 	}
 
 	isGemma := CurrentSettings.EmbeddingModel == "embeddinggemma-2-q4"
-	if isGemma && ORT_GemmaTextSession == nil {
-		return nil, fmt.Errorf("Gemma text session not loaded")
+	if isGemma {
+		if ORT_GemmaTextSession == nil {
+			return nil, fmt.Errorf("Gemma text session not loaded")
+		}
+
+		inputIDSlice := Tokenize(text)
+		seqLength := int64(len(inputIDSlice))
+
+		inputIDs := make([]int64, seqLength)
+		attentionMask := make([]int64, seqLength)
+		for i, id := range inputIDSlice {
+			inputIDs[i] = id
+			attentionMask[i] = 1
+		}
+
+		tInput, err := onnxruntime_go.NewTensor([]int64{1, seqLength}, inputIDs)
+		if err != nil {
+			return nil, err
+		}
+		defer tInput.Destroy()
+
+		tMask, err := onnxruntime_go.NewTensor([]int64{1, seqLength}, attentionMask)
+		if err != nil {
+			return nil, err
+		}
+		defer tMask.Destroy()
+
+		tEmptyImg, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+		defer tEmptyImg.Destroy()
+		tEmptyVid, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+		defer tEmptyVid.Destroy()
+		tEmptyAud, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+		defer tEmptyAud.Destroy()
+
+		tOutput, err := onnxruntime_go.NewEmptyTensor[float32]([]int64{1, 768})
+		if err != nil {
+			return nil, err
+		}
+		defer tOutput.Destroy()
+
+		err = ORT_GemmaTextSession.Run(
+			[]onnxruntime_go.Value{tInput, tMask, tEmptyImg, tEmptyVid, tEmptyAud},
+			[]onnxruntime_go.Value{tOutput},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("Gemma text run error: %w", err)
+		}
+
+		outputData := tOutput.GetData()
+		embedding := make([]float32, 768)
+		copy(embedding, outputData[:768])
+
+		// L2 Normalize
+		var sumSquares float32
+		for _, val := range embedding {
+			sumSquares += val * val
+		}
+		norm := float32(math.Sqrt(float64(sumSquares)))
+		if norm == 0 {
+			norm = 1e-9
+		}
+		for j := 0; j < 768; j++ {
+			embedding[j] /= norm
+		}
+
+		return embedding, nil
 	}
-	if !isGemma && ORT_Session == nil {
+
+	// MiniLM
+	if ORT_Session == nil {
 		return nil, fmt.Errorf("MiniLM session not loaded")
 	}
 
@@ -325,34 +404,24 @@ func GetEmbedding(text string) ([]float32, error) {
 		tokenTypeIDs[i] = 0
 	}
 
-	// Shape: [1, seqLength]
 	shape := []int64{1, seqLength}
 	tInput, _ := onnxruntime_go.NewTensor(shape, inputIDs)
+	defer tInput.Destroy()
 	tMask, _ := onnxruntime_go.NewTensor(shape, attentionMask)
+	defer tMask.Destroy()
+	tType, _ := onnxruntime_go.NewTensor(shape, tokenTypeIDs)
+	defer tType.Destroy()
 
 	hiddenSize := 384
-	if isGemma {
-		hiddenSize = 768
-	}
-
 	outputShape := []int64{1, seqLength, int64(hiddenSize)}
 	outputData := make([]float32, 1*seqLength*int64(hiddenSize))
 	tOutput, _ := onnxruntime_go.NewTensor(outputShape, outputData)
+	defer tOutput.Destroy()
 
-	var err error
-	if isGemma {
-		err = ORT_GemmaTextSession.Run(
-			[]*onnxruntime_go.Tensor[int64]{tInput, tMask},
-			[]*onnxruntime_go.Tensor[float32]{tOutput},
-		)
-	} else {
-		tType, _ := onnxruntime_go.NewTensor(shape, tokenTypeIDs)
-		err = ORT_Session.Run(
-			[]*onnxruntime_go.Tensor[int64]{tInput, tMask, tType},
-			[]*onnxruntime_go.Tensor[float32]{tOutput},
-		)
-	}
-
+	err := ORT_Session.Run(
+		[]*onnxruntime_go.Tensor[int64]{tInput, tMask, tType},
+		[]*onnxruntime_go.Tensor[float32]{tOutput},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -365,12 +434,11 @@ func GetEmbedding(text string) ([]float32, error) {
 			embedding[j] += outputData[start+j]
 		}
 	}
-
 	for j := 0; j < hiddenSize; j++ {
 		embedding[j] /= float32(seqLength)
 	}
 
-	// Normalize (L2)
+	// L2 Normalize
 	var sumSquares float32
 	for _, val := range embedding {
 		sumSquares += val * val
@@ -379,7 +447,6 @@ func GetEmbedding(text string) ([]float32, error) {
 	if norm == 0 {
 		norm = 1e-9
 	}
-
 	for j := 0; j < hiddenSize; j++ {
 		embedding[j] /= norm
 	}
@@ -387,55 +454,173 @@ func GetEmbedding(text string) ([]float32, error) {
 	return embedding, nil
 }
 
+// preprocessGemmaImage converts an arbitrary image into Gemma 4 vision patches and position IDs
+func preprocessGemmaImage(img image.Image) ([]float32, []int64) {
+	const maxPatches = 280
+	const patchSize = 16
+	const poolingKernel = 3
+	const sideMult = poolingKernel * patchSize // 48
+
+	origB := img.Bounds()
+	origW := origB.Dx()
+	origH := origB.Dy()
+
+	targetPx := float64(maxPatches * patchSize * patchSize)
+	factor := math.Sqrt(targetPx / float64(origW*origH))
+	idealH := factor * float64(origH)
+	idealW := factor * float64(origW)
+
+	targetH := int(math.Floor(idealH/float64(sideMult))) * sideMult
+	targetW := int(math.Floor(idealW/float64(sideMult))) * sideMult
+
+	if targetH == 0 {
+		targetH = sideMult
+	}
+	if targetW == 0 {
+		targetW = sideMult
+	}
+
+	// Resize image
+	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+	draw.CatmullRom.Scale(dst, dst.Rect, img, origB, draw.Over, nil)
+
+	patchesY := targetH / patchSize
+	patchesX := targetW / patchSize
+
+	pixelValues := make([]float32, maxPatches*768)
+	posIDs := make([]int64, maxPatches*2)
+
+	// Set pad positions to -1
+	for i := 0; i < maxPatches*2; i++ {
+		posIDs[i] = -1
+	}
+
+	patchIdx := 0
+	for py := 0; py < patchesY; py++ {
+		for px := 0; px < patchesX; px++ {
+			if patchIdx >= maxPatches {
+				break
+			}
+			posIDs[patchIdx*2] = int64(py)
+			posIDs[patchIdx*2+1] = int64(px)
+
+			patchOffset := patchIdx * 768
+			pixelInPatch := 0
+			for y := 0; y < patchSize; y++ {
+				for x := 0; x < patchSize; x++ {
+					imgX := px*patchSize + x
+					imgY := py*patchSize + y
+					r, g, b, _ := dst.At(imgX, imgY).RGBA()
+
+					// Rescale to [0, 1]
+					pixelValues[patchOffset+pixelInPatch*3+0] = float32(r>>8) / 255.0
+					pixelValues[patchOffset+pixelInPatch*3+1] = float32(g>>8) / 255.0
+					pixelValues[patchOffset+pixelInPatch*3+2] = float32(b>>8) / 255.0
+					pixelInPatch++
+				}
+			}
+			patchIdx++
+		}
+	}
+
+	return pixelValues, posIDs
+}
+
 func GetImageEmbedding(path string) ([]float32, error) {
-	if !IsAIReady || ORT_GemmaVisionSession == nil {
-		return nil, fmt.Errorf("Gemma Vision engine not ready")
+	if !IsAIReady || ORT_GemmaVisionSession == nil || ORT_GemmaTextSession == nil {
+		return nil, fmt.Errorf("Gemma Multimodal engine not ready")
 	}
 
 	img, err := loadImage(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed loading image: %w", err)
 	}
 
-	// Resize to 224x224 (Standard Vision Transformer input)
-	resized := resizeImage(img, 224, 224)
-	inputData := imageToFloat32(resized, 224, 224)
+	pixVals, posIDs := preprocessGemmaImage(img)
 
-	// Create Tensor: [1, 3, 224, 224]
-	tInput, err := onnxruntime_go.NewTensor([]int64{1, 3, 224, 224}, inputData)
+	tPixVals, err := onnxruntime_go.NewTensor([]int64{1, 280, 768}, pixVals)
 	if err != nil {
 		return nil, err
 	}
+	defer tPixVals.Destroy()
 
-	hiddenSize := 768
-	numPatches := 197 // 14x14 patches + 1 CLS token
-	outputShape := []int64{1, int64(numPatches), int64(hiddenSize)}
-	outputData := make([]float32, 1*int64(numPatches)*int64(hiddenSize))
+	tPosIDs, err := onnxruntime_go.NewTensor([]int64{1, 280, 2}, posIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer tPosIDs.Destroy()
 
-	tOutput, _ := onnxruntime_go.NewTensor(outputShape, outputData)
-
+	visionOutputs := []onnxruntime_go.Value{nil}
 	err = ORT_GemmaVisionSession.Run(
-		[]*onnxruntime_go.Tensor[float32]{tInput},
-		[]*onnxruntime_go.Tensor[float32]{tOutput},
+		[]onnxruntime_go.Value{tPixVals, tPosIDs},
+		visionOutputs,
 	)
 	if err != nil {
+		return nil, fmt.Errorf("Gemma Vision run error: %w", err)
+	}
+	defer visionOutputs[0].Destroy()
+
+	tVisionOut := visionOutputs[0].(*onnxruntime_go.Tensor[float32])
+	visFeats := tVisionOut.GetData()
+	visShape := tVisionOut.GetShape()
+	numImgTokens := visShape[0]
+
+	// Multimodal merge through Gemma text model: <boi> + numImgTokens * <image> + <eoi>
+	var imgTokens []int64
+	imgTokens = append(imgTokens, GemmaTokenBOI)
+	for j := int64(0); j < numImgTokens; j++ {
+		imgTokens = append(imgTokens, GemmaTokenImage)
+	}
+	imgTokens = append(imgTokens, GemmaTokenEOI)
+
+	seqLen := int64(len(imgTokens))
+	mask := make([]int64, seqLen)
+	for j := range mask {
+		mask[j] = 1
+	}
+
+	tTokens, err := onnxruntime_go.NewTensor([]int64{1, seqLen}, imgTokens)
+	if err != nil {
 		return nil, err
 	}
+	defer tTokens.Destroy()
 
-	// Mean Pooling across all patches
-	embedding := make([]float32, hiddenSize)
-	for i := 0; i < numPatches; i++ {
-		start := i * hiddenSize
-		for j := 0; j < hiddenSize; j++ {
-			embedding[j] += outputData[start+j]
-		}
+	tMask, err := onnxruntime_go.NewTensor([]int64{1, seqLen}, mask)
+	if err != nil {
+		return nil, err
+	}
+	defer tMask.Destroy()
+
+	tImgFeats, err := onnxruntime_go.NewTensor([]int64{numImgTokens, 512}, visFeats)
+	if err != nil {
+		return nil, err
+	}
+	defer tImgFeats.Destroy()
+
+	tEmptyVid, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+	defer tEmptyVid.Destroy()
+	tEmptyAud, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+	defer tEmptyAud.Destroy()
+
+	tOut, err := onnxruntime_go.NewEmptyTensor[float32]([]int64{1, 768})
+	if err != nil {
+		return nil, err
+	}
+	defer tOut.Destroy()
+
+	err = ORT_GemmaTextSession.Run(
+		[]onnxruntime_go.Value{tTokens, tMask, tImgFeats, tEmptyVid, tEmptyAud},
+		[]onnxruntime_go.Value{tOut},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("Gemma Multimodal merge error: %w", err)
 	}
 
-	for j := 0; j < hiddenSize; j++ {
-		embedding[j] /= float32(numPatches)
-	}
+	rawVec := tOut.GetData()
+	embedding := make([]float32, 768)
+	copy(embedding, rawVec[:768])
 
-	// Normalize (L2)
+	// L2 Normalize
 	var sumSquares float32
 	for _, val := range embedding {
 		sumSquares += val * val
@@ -444,8 +629,7 @@ func GetImageEmbedding(path string) ([]float32, error) {
 	if norm == 0 {
 		norm = 1e-9
 	}
-
-	for j := 0; j < hiddenSize; j++ {
+	for j := 0; j < 768; j++ {
 		embedding[j] /= norm
 	}
 

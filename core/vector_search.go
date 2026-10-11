@@ -70,7 +70,9 @@ func SemanticSearch(query string, minTime int64, maxTime int64) ([]SearchResult,
 		}
 
 		displaySnippet := summary
-		if len(displaySnippet) > 200 {
+		if displaySnippet == "[IMAGE_MULTIMODAL]" {
+			displaySnippet = "Visual Content (Gemma Multimodal)"
+		} else if len(displaySnippet) > 200 {
 			displaySnippet = displaySnippet[:200] + "..."
 		}
 

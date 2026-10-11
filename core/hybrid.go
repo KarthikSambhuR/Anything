@@ -27,7 +27,7 @@ func HybridSearch(rawQuery string) ([]SearchResult, error) {
 
 	go func() {
 		defer wg.Done()
-		if IsAIReady {
+		if IsAIReady && CurrentSettings.AIEnabled {
 			vectorResults, errVector = SemanticSearch(cleanQuery, 0, 0)
 		}
 	}()
@@ -89,6 +89,24 @@ func HybridSearch(rawQuery string) ([]SearchResult, error) {
 		}
 
 		return score
+	}
+
+	// Process Installed Apps (High Priority)
+	if cleanQuery != "" {
+		appRows, err := DB.Query("SELECT path, display_name, COALESCE(icon_data, ''), COALESCE(publisher, '') FROM installed_apps WHERE display_name LIKE ? OR name LIKE ? LIMIT 5", "%"+cleanQuery+"%", "%"+cleanQuery+"%")
+		if err == nil {
+			for appRows.Next() {
+				var r SearchResult
+				var pub string
+				if err := appRows.Scan(&r.Path, &r.Snippet, &r.IconData, &pub); err == nil {
+					scoreMap[r.Path] = MergedResult{
+						Result:     r,
+						FinalScore: 25000.0,
+					}
+				}
+			}
+			appRows.Close()
+		}
 	}
 
 	// Process Keyword Results

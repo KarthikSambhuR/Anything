@@ -3,6 +3,7 @@ export namespace core {
 	export class AppSettings {
 	    embedding_strategy: string;
 	    embedding_model: string;
+	    ai_enabled: boolean;
 	    max_chunks_per_file: number;
 	    hotkey: string;
 	    ignored_paths: string[];
@@ -18,6 +19,7 @@ export namespace core {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.embedding_strategy = source["embedding_strategy"];
 	        this.embedding_model = source["embedding_model"];
+	        this.ai_enabled = source["ai_enabled"];
 	        this.max_chunks_per_file = source["max_chunks_per_file"];
 	        this.hotkey = source["hotkey"];
 	        this.ignored_paths = source["ignored_paths"];

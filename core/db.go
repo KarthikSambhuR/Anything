@@ -107,6 +107,20 @@ func InitDB(dbPath string) {
 		log.Fatal(err)
 	}
 
+	_, err = DB.Exec(`
+	CREATE TABLE IF NOT EXISTS installed_apps (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT UNIQUE,
+		display_name TEXT,
+		path TEXT,
+		icon_data TEXT,
+		publisher TEXT,
+		version TEXT
+	);`)
+	if err != nil {
+		log.Printf("Error creating installed_apps table: %v", err)
+	}
+
 	setupTriggers()
 }
 
@@ -153,7 +167,7 @@ type FileData struct {
 }
 
 func GetFilesNeedingEmbedding() (map[int]FileData, error) {
-	query := `SELECT id, path, summary FROM files WHERE summary IS NOT NULL AND summary != "" AND summary != "[BAIT]" AND id NOT IN (SELECT distinct file_id FROM file_vectors)`
+	query := `SELECT id, path, summary FROM files WHERE summary IS NOT NULL AND summary != "" AND summary != "[BAIT]" AND summary != "[NO_CONTENT]" AND id NOT IN (SELECT distinct file_id FROM file_vectors)`
 	rows, err := DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -251,7 +265,7 @@ func SearchFiles(queryText string, minTime int64, maxTime int64) ([]SearchResult
 }
 
 func GetIndexedApplications() ([]SearchResult, error) {
-	query := `SELECT path, filename, COALESCE(icon_data, ''), extension FROM files WHERE extension IN ('.exe', '.lnk') ORDER BY filename ASC`
+	query := `SELECT path, display_name, COALESCE(icon_data, ''), COALESCE(publisher, '') FROM installed_apps ORDER BY display_name COLLATE NOCASE ASC`
 	rows, err := DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -261,10 +275,11 @@ func GetIndexedApplications() ([]SearchResult, error) {
 	var results []SearchResult
 	for rows.Next() {
 		var res SearchResult
-		if err := rows.Scan(&res.Path, &res.Snippet, &res.IconData, &res.Extension); err != nil {
+		var publisher string
+		if err := rows.Scan(&res.Path, &res.Snippet, &res.IconData, &publisher); err != nil {
 			continue
 		}
-		// res.Snippet is hijacking the filename field for display purposes here
+		res.Extension = publisher
 		results = append(results, res)
 	}
 	return results, nil

@@ -12,6 +12,7 @@ type AppSettings struct {
 
 	// Selected embedding model: "all-minilm-l6-v2" or "embeddinggemma-2-q4"
 	EmbeddingModel string `json:"embedding_model"`
+	AIEnabled      bool   `json:"ai_enabled"`
 
 	// Max vectors per file (Only used in "accurate" mode)
 	MaxChunksPerFile int    `json:"max_chunks_per_file"`
@@ -28,7 +29,8 @@ var CurrentSettings AppSettings
 func getDefaultSettings() AppSettings {
 	return AppSettings{
 		EmbeddingStrategy: "simple",
-		EmbeddingModel:    "all-minilm-l6-v2",
+		EmbeddingModel:    "embeddinggemma-2-q4",
+		AIEnabled:         true,
 		MaxChunksPerFile:  15,
 		Hotkey:            "Alt+Space",
 		IgnoredPaths: []string{
@@ -62,6 +64,10 @@ func LoadSettings() {
 	if err != nil {
 		fmt.Printf("Error parsing settings: %v. Using defaults.\n", err)
 		CurrentSettings = getDefaultSettings()
+	}
+	if CurrentSettings.EmbeddingModel == "" || CurrentSettings.EmbeddingModel == "all-minilm-l6-v2" {
+		CurrentSettings.EmbeddingModel = "embeddinggemma-2-q4"
+		SaveSettings()
 	}
 	fmt.Println("Settings loaded.")
 }
