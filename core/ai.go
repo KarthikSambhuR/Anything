@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/yalue/onnxruntime_go"
@@ -21,7 +22,8 @@ var (
 	ORT_Session            *onnxruntime_go.DynamicSession[int64, float32]
 	ORT_GemmaTextSession   *onnxruntime_go.DynamicAdvancedSession
 	ORT_GemmaVisionSession *onnxruntime_go.DynamicAdvancedSession
-	IsAIReady              bool = false
+	IsAIReady              bool       = false
+	aiMutex                sync.Mutex
 )
 
 const (
@@ -402,6 +404,9 @@ func downloadOnnxRuntime(targetLibName string) error {
 // --- EMBEDDING ENGINE ---
 
 func GetEmbedding(text string) ([]float32, error) {
+	aiMutex.Lock()
+	defer aiMutex.Unlock()
+
 	if !IsAIReady {
 		return nil, fmt.Errorf("AI engine not ready")
 	}
@@ -489,6 +494,9 @@ func GetBatchEmbeddings(texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
+	aiMutex.Lock()
+	defer aiMutex.Unlock()
+
 	if !IsAIReady {
 		return nil, fmt.Errorf("AI engine not ready")
 	}
@@ -746,6 +754,9 @@ func preprocessGemmaImage(img image.Image) ([]float32, []int64) {
 }
 
 func GetImageEmbedding(path string) ([]float32, error) {
+	aiMutex.Lock()
+	defer aiMutex.Unlock()
+
 	if !IsAIReady || ORT_GemmaVisionSession == nil || ORT_GemmaTextSession == nil {
 		return nil, fmt.Errorf("Gemma Multimodal engine not ready")
 	}
