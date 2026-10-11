@@ -213,16 +213,41 @@ func InitAI() {
 			return
 		}
 
-		textSession, errText := onnxruntime_go.NewDynamicAdvancedSession(
-			textModelPath,
-			[]string{"input_ids", "attention_mask", "image_features", "video_features", "audio_features"},
-			[]string{"sentence_embedding"},
-			nil,
-		)
-		if errText != nil {
-			fmt.Printf("❌ [AI Error] Failed to load Gemma Text model: %v\n", errText)
-			visionSession.Destroy()
-			return
+		var textSession *onnxruntime_go.DynamicAdvancedSession
+		var errText error
+
+		// Attempt GPU acceleration via DirectML (DirectX 12 on NVIDIA RTX 4050 / Windows GPU)
+		gpuOpts, errGpu := onnxruntime_go.NewSessionOptions()
+		if errGpu == nil {
+			if errDml := gpuOpts.AppendExecutionProviderDirectML(0); errDml == nil {
+				textSession, errText = onnxruntime_go.NewDynamicAdvancedSession(
+					textModelPath,
+					[]string{"input_ids", "attention_mask", "image_features", "video_features", "audio_features"},
+					[]string{"sentence_embedding"},
+					gpuOpts,
+				)
+				if errText == nil {
+					fmt.Println("🚀 [AI] Gemma 2 Text Model running on GPU (DirectML - RTX 4050)!")
+				} else {
+					fmt.Printf("⚠️  [AI] DirectML GPU initialization failed: %v. Using CPU.\n", errText)
+				}
+			}
+			gpuOpts.Destroy()
+		}
+
+		if textSession == nil {
+			textSession, errText = onnxruntime_go.NewDynamicAdvancedSession(
+				textModelPath,
+				[]string{"input_ids", "attention_mask", "image_features", "video_features", "audio_features"},
+				[]string{"sentence_embedding"},
+				nil,
+			)
+			if errText != nil {
+				fmt.Printf("❌ [AI Error] Failed to load Gemma Text model: %v\n", errText)
+				visionSession.Destroy()
+				return
+			}
+			fmt.Println("✅ [AI] Gemma 2 Text Model running on CPU.")
 		}
 
 		ORT_GemmaVisionSession = visionSession

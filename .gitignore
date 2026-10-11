@@ -2,6 +2,8 @@ build/bin
 node_modules
 frontend/dist
 onnxruntime.dll
+onnxruntime_providers_shared.dll
+*.dll.old
 index.db
 Anything.exe
 todo.md
