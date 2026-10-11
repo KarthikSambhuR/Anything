@@ -429,27 +429,22 @@ func RunJITScan(path string) {
 		chunks = chunkText(content, maxChunks)
 	}
 
-	var validSegments []string
-	var chunkIndices []int
+	var items []VectorItem
 	for i, segment := range chunks {
-		if len(segment) >= 10 {
-			validSegments = append(validSegments, segment)
-			chunkIndices = append(chunkIndices, i)
+		if len(segment) < 10 {
+			continue
+		}
+		vec, err := GetEmbedding(segment)
+		if err == nil {
+			items = append(items, VectorItem{
+				FileID:     id,
+				ChunkIndex: i,
+				Vector:     vec,
+			})
 		}
 	}
-	if len(validSegments) > 0 {
-		vecs, err := GetBatchEmbeddings(validSegments)
-		if err == nil {
-			var items []VectorItem
-			for idx, v := range vecs {
-				items = append(items, VectorItem{
-					FileID:     id,
-					ChunkIndex: chunkIndices[idx],
-					Vector:     v,
-				})
-			}
-			SaveBatchVectors(items)
-		}
+	if len(items) > 0 {
+		SaveBatchVectors(items)
 	}
 }
 
@@ -515,86 +510,41 @@ func RunEmbeddingScan() {
 		maxChunks = 1 // Force single vector for simple mode
 	}
 
-	const batchSize = 16
-	var pendingBatchTexts []string
-	type chunkMeta struct {
-		id       int
-		chunkIdx int
-	}
-	var pendingBatchMeta []chunkMeta
-	var pendingImageItems []VectorItem
-
-	flushBatch := func() {
-		if len(pendingBatchTexts) == 0 {
-			return
-		}
-		vecs, err := GetBatchEmbeddings(pendingBatchTexts)
-		if err != nil {
-			fmt.Printf("\nBatch AI Error: %v\n", err)
-		} else {
-			var items []VectorItem
-			for idx, v := range vecs {
-				if idx < len(pendingBatchMeta) {
-					items = append(items, VectorItem{
-						FileID:     pendingBatchMeta[idx].id,
-						ChunkIndex: pendingBatchMeta[idx].chunkIdx,
-						Vector:     v,
-					})
-				}
-			}
-			if err := SaveBatchVectors(items); err != nil {
-				fmt.Printf("\nDB Batch Save Error: %v\n", err)
-			}
-		}
-		pendingBatchTexts = pendingBatchTexts[:0]
-		pendingBatchMeta = pendingBatchMeta[:0]
-	}
-
-	flushImages := func() {
-		if len(pendingImageItems) == 0 {
-			return
-		}
-		if err := SaveBatchVectors(pendingImageItems); err != nil {
-			fmt.Printf("\nDB Batch Image Save Error: %v\n", err)
-		}
-		pendingImageItems = pendingImageItems[:0]
-	}
-
-	flushAll := func() {
-		flushBatch()
-		flushImages()
-	}
-
 	count := 0
 
 	for id, data := range pendingFiles {
 		count++
 		percent := (count * 100) / total
-		if count%16 == 0 || count == total {
-			fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) Embedding on GPU...", count, total, percent)
-			EmitProgress("indexing", fmt.Sprintf("Embedding [%d / %d] files (%d%%)", count, total, percent), 70+(percent*30)/100)
+		elapsed := time.Since(startTime)
+
+		var remainingStr string
+		if count > 1 {
+			avgPerItem := elapsed / time.Duration(count)
+			remaining := avgPerItem * time.Duration(total - count)
+			remainingStr = formatDuration(remaining)
+		} else {
+			remainingStr = "calculating..."
+		}
+		elapsedStr := formatDuration(elapsed)
+
+		fileName := truncateString(filepath.Base(data.Path), 28)
+		fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) | %s elapsed | %s left | %-28s", 
+			count, total, percent, elapsedStr, remainingStr, fileName)
+
+		if count%5 == 0 || count == total {
+			EmitProgress("indexing", fmt.Sprintf("Embedding [%d / %d] (%d%%) • %s left (Elapsed: %s)", 
+				count, total, percent, remainingStr, elapsedStr), 70+(percent*30)/100)
 		}
 
 		if data.Summary == "[IMAGE_MULTIMODAL]" {
-			flushBatch()
-
 			vec, err := GetImageEmbedding(data.Path)
 			if err != nil {
 				fmt.Printf("\nVision AI Error on file %d (%s): %v\n", id, data.Path, err)
 				continue
 			}
-			pendingImageItems = append(pendingImageItems, VectorItem{
-				FileID:     id,
-				ChunkIndex: 0,
-				Vector:     vec,
-			})
-			if len(pendingImageItems) >= batchSize {
-				flushImages()
-			}
+			SaveVector(id, 0, vec)
 			continue
 		}
-
-		flushImages()
 
 		cleanSum := strings.TrimSpace(data.Summary)
 		if len(cleanSum) < 10 || cleanSum == "[NO_CONTENT]" {
@@ -608,24 +558,46 @@ func RunEmbeddingScan() {
 			chunks = chunkText(cleanSum, maxChunks)
 		}
 
+		var items []VectorItem
 		for i, segment := range chunks {
 			if len(segment) < 10 {
 				continue
 			}
-			pendingBatchTexts = append(pendingBatchTexts, segment)
-			pendingBatchMeta = append(pendingBatchMeta, chunkMeta{id: id, chunkIdx: i})
-
-			if len(pendingBatchTexts) >= batchSize {
-				flushBatch()
+			vec, err := GetEmbedding(segment)
+			if err != nil {
+				continue
 			}
+			items = append(items, VectorItem{
+				FileID:     id,
+				ChunkIndex: i,
+				Vector:     vec,
+			})
+		}
+		if len(items) > 0 {
+			SaveBatchVectors(items)
 		}
 	}
 
-	// Flush remaining items
-	flushAll()
+	elapsed := time.Since(startTime)
+	fmt.Printf("\nPHASE 3 Complete! Vectors generated in %s\n", formatDuration(elapsed))
+	EmitProgress("indexing", fmt.Sprintf("Phase 3 Complete: Indexed %d files in %s", total, formatDuration(elapsed)), 100)
+}
 
-	fmt.Printf("\nPHASE 3 Complete! Vectors generated in %v\n", time.Since(startTime))
-	EmitProgress("indexing", fmt.Sprintf("Phase 3 Complete: Indexed %d files", total), 100)
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+
+	if h > 0 {
+		return fmt.Sprintf("%dh %02dm %02ds", h, m, s)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %02ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
 }
 
 func RunIconScan() {

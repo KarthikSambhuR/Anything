@@ -402,14 +402,87 @@ func downloadOnnxRuntime(targetLibName string) error {
 // --- EMBEDDING ENGINE ---
 
 func GetEmbedding(text string) ([]float32, error) {
-	batch, err := GetBatchEmbeddings([]string{text})
-	if err != nil {
-		return nil, err
+	if !IsAIReady {
+		return nil, fmt.Errorf("AI engine not ready")
 	}
-	if len(batch) == 0 {
-		return nil, fmt.Errorf("empty embedding result")
+
+	isGemma := CurrentSettings.EmbeddingModel == "embeddinggemma-2-q4"
+	if isGemma {
+		if ORT_GemmaTextSession == nil {
+			return nil, fmt.Errorf("Gemma text session not loaded")
+		}
+
+		inputIDSlice := Tokenize(text)
+		seqLength := int64(len(inputIDSlice))
+		if seqLength == 0 {
+			return nil, fmt.Errorf("empty tokens")
+		}
+		if seqLength > 512 {
+			seqLength = 512
+			inputIDSlice = inputIDSlice[:512]
+		}
+
+		inputIDs := make([]int64, seqLength)
+		attentionMask := make([]int64, seqLength)
+		for i, id := range inputIDSlice {
+			inputIDs[i] = id
+			attentionMask[i] = 1
+		}
+
+		tInput, err := onnxruntime_go.NewTensor([]int64{1, seqLength}, inputIDs)
+		if err != nil {
+			return nil, err
+		}
+		defer tInput.Destroy()
+
+		tMask, err := onnxruntime_go.NewTensor([]int64{1, seqLength}, attentionMask)
+		if err != nil {
+			return nil, err
+		}
+		defer tMask.Destroy()
+
+		tEmptyImg, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+		defer tEmptyImg.Destroy()
+		tEmptyVid, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+		defer tEmptyVid.Destroy()
+		tEmptyAud, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+		defer tEmptyAud.Destroy()
+
+		tOutput, err := onnxruntime_go.NewEmptyTensor[float32]([]int64{1, 768})
+		if err != nil {
+			return nil, err
+		}
+		defer tOutput.Destroy()
+
+		err = ORT_GemmaTextSession.Run(
+			[]onnxruntime_go.Value{tInput, tMask, tEmptyImg, tEmptyVid, tEmptyAud},
+			[]onnxruntime_go.Value{tOutput},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("Gemma text run error: %w", err)
+		}
+
+		outputData := tOutput.GetData()
+		embedding := make([]float32, 768)
+		copy(embedding, outputData[:768])
+
+		// L2 Normalize
+		var sumSquares float32
+		for _, val := range embedding {
+			sumSquares += val * val
+		}
+		norm := float32(math.Sqrt(float64(sumSquares)))
+		if norm == 0 {
+			norm = 1e-9
+		}
+		for j := 0; j < 768; j++ {
+			embedding[j] /= norm
+		}
+
+		return embedding, nil
 	}
-	return batch[0], nil
+
+	return getSingleMiniLMEmbedding(text)
 }
 
 func GetBatchEmbeddings(texts []string) ([][]float32, error) {
