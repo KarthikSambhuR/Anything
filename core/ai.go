@@ -205,12 +205,22 @@ func InitAI() {
 		visionModelPath := GetDataPath("vision_encoder_quantized.onnx")
 		textModelPath := GetDataPath("model_quantized.onnx")
 
+		var visOpts *onnxruntime_go.SessionOptions
+		if vo, err := onnxruntime_go.NewSessionOptions(); err == nil {
+			_ = vo.SetGraphOptimizationLevel(onnxruntime_go.GraphOptimizationLevelEnableAll)
+			_ = vo.SetIntraOpNumThreads(runtime.NumCPU())
+			visOpts = vo
+		}
+
 		visionSession, errVision := onnxruntime_go.NewDynamicAdvancedSession(
 			visionModelPath,
 			[]string{"pixel_values", "pixel_position_ids"},
 			[]string{"image_features"},
-			nil,
+			visOpts,
 		)
+		if visOpts != nil {
+			visOpts.Destroy()
+		}
 		if errVision != nil {
 			fmt.Printf("❌ [AI Error] Failed to load Gemma Vision model: %v\n", errVision)
 			return
@@ -646,12 +656,12 @@ func preprocessGemmaImage(img image.Image) ([]float32, []int64) {
 				for x := 0; x < patchSize; x++ {
 					imgX := px*patchSize + x
 					imgY := py*patchSize + y
-					r, g, b, _ := dst.At(imgX, imgY).RGBA()
+					pixOff := dst.PixOffset(imgX, imgY)
 
 					// Rescale to [0, 1]
-					pixelValues[patchOffset+pixelInPatch*3+0] = float32(r>>8) / 255.0
-					pixelValues[patchOffset+pixelInPatch*3+1] = float32(g>>8) / 255.0
-					pixelValues[patchOffset+pixelInPatch*3+2] = float32(b>>8) / 255.0
+					pixelValues[patchOffset+pixelInPatch*3+0] = float32(dst.Pix[pixOff+0]) / 255.0
+					pixelValues[patchOffset+pixelInPatch*3+1] = float32(dst.Pix[pixOff+1]) / 255.0
+					pixelValues[patchOffset+pixelInPatch*3+2] = float32(dst.Pix[pixOff+2]) / 255.0
 					pixelInPatch++
 				}
 			}
