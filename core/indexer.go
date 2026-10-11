@@ -429,13 +429,26 @@ func RunJITScan(path string) {
 		chunks = chunkText(content, maxChunks)
 	}
 
+	var validSegments []string
+	var chunkIndices []int
 	for i, segment := range chunks {
-		if len(segment) < 10 {
-			continue
+		if len(segment) >= 10 {
+			validSegments = append(validSegments, segment)
+			chunkIndices = append(chunkIndices, i)
 		}
-		vec, err := GetEmbedding(segment)
+	}
+	if len(validSegments) > 0 {
+		vecs, err := GetBatchEmbeddings(validSegments)
 		if err == nil {
-			SaveVector(id, i, vec)
+			var items []VectorItem
+			for idx, v := range vecs {
+				items = append(items, VectorItem{
+					FileID:     id,
+					ChunkIndex: chunkIndices[idx],
+					Vector:     v,
+				})
+			}
+			SaveBatchVectors(items)
 		}
 	}
 }
@@ -502,46 +515,114 @@ func RunEmbeddingScan() {
 		maxChunks = 1 // Force single vector for simple mode
 	}
 
+	const batchSize = 16
+	var pendingBatchTexts []string
+	type chunkMeta struct {
+		id       int
+		chunkIdx int
+	}
+	var pendingBatchMeta []chunkMeta
+	var pendingImageItems []VectorItem
+
+	flushBatch := func() {
+		if len(pendingBatchTexts) == 0 {
+			return
+		}
+		vecs, err := GetBatchEmbeddings(pendingBatchTexts)
+		if err != nil {
+			fmt.Printf("\nBatch AI Error: %v\n", err)
+		} else {
+			var items []VectorItem
+			for idx, v := range vecs {
+				if idx < len(pendingBatchMeta) {
+					items = append(items, VectorItem{
+						FileID:     pendingBatchMeta[idx].id,
+						ChunkIndex: pendingBatchMeta[idx].chunkIdx,
+						Vector:     v,
+					})
+				}
+			}
+			if err := SaveBatchVectors(items); err != nil {
+				fmt.Printf("\nDB Batch Save Error: %v\n", err)
+			}
+		}
+		pendingBatchTexts = pendingBatchTexts[:0]
+		pendingBatchMeta = pendingBatchMeta[:0]
+	}
+
+	flushImages := func() {
+		if len(pendingImageItems) == 0 {
+			return
+		}
+		if err := SaveBatchVectors(pendingImageItems); err != nil {
+			fmt.Printf("\nDB Batch Image Save Error: %v\n", err)
+		}
+		pendingImageItems = pendingImageItems[:0]
+	}
+
+	flushAll := func() {
+		flushBatch()
+		flushImages()
+	}
+
 	count := 0
 
 	for id, data := range pendingFiles {
 		count++
 		percent := (count * 100) / total
-		fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) Embedding...", count, total, percent)
-		EmitProgress("indexing", fmt.Sprintf("Embedding [%d / %d] files (%d%%)", count, total, percent), 70+(percent*30)/100)
+		if count%16 == 0 || count == total {
+			fmt.Printf("\r[AI Scan] [%d/%d] (%d%%) Embedding on GPU...", count, total, percent)
+			EmitProgress("indexing", fmt.Sprintf("Embedding [%d / %d] files (%d%%)", count, total, percent), 70+(percent*30)/100)
+		}
 
 		if data.Summary == "[IMAGE_MULTIMODAL]" {
+			flushBatch()
+
 			vec, err := GetImageEmbedding(data.Path)
 			if err != nil {
 				fmt.Printf("\nVision AI Error on file %d (%s): %v\n", id, data.Path, err)
 				continue
 			}
-			SaveVector(id, 0, vec)
+			pendingImageItems = append(pendingImageItems, VectorItem{
+				FileID:     id,
+				ChunkIndex: 0,
+				Vector:     vec,
+			})
+			if len(pendingImageItems) >= batchSize {
+				flushImages()
+			}
+			continue
+		}
+
+		flushImages()
+
+		cleanSum := strings.TrimSpace(data.Summary)
+		if len(cleanSum) < 10 || cleanSum == "[NO_CONTENT]" {
 			continue
 		}
 
 		var chunks []string
-
 		if CurrentSettings.EmbeddingStrategy == "simple" {
-			chunks = []string{data.Summary}
+			chunks = []string{cleanSum}
 		} else {
-			chunks = chunkText(data.Summary, maxChunks)
+			chunks = chunkText(cleanSum, maxChunks)
 		}
 
 		for i, segment := range chunks {
 			if len(segment) < 10 {
 				continue
 			}
+			pendingBatchTexts = append(pendingBatchTexts, segment)
+			pendingBatchMeta = append(pendingBatchMeta, chunkMeta{id: id, chunkIdx: i})
 
-			vec, err := GetEmbedding(segment)
-			if err != nil {
-				fmt.Printf("\nAI Error on file %d: %v\n", id, err)
-				continue
+			if len(pendingBatchTexts) >= batchSize {
+				flushBatch()
 			}
-
-			SaveVector(id, i, vec)
 		}
 	}
+
+	// Flush remaining items
+	flushAll()
 
 	fmt.Printf("\nPHASE 3 Complete! Vectors generated in %v\n", time.Since(startTime))
 	EmitProgress("indexing", fmt.Sprintf("Phase 3 Complete: Indexed %d files", total), 100)

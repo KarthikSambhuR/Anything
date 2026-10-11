@@ -233,6 +233,8 @@ func InitAI() {
 		// Attempt GPU acceleration via DirectML on selected adapter
 		gpuOpts, errGpu := onnxruntime_go.NewSessionOptions()
 		if errGpu == nil {
+			_ = gpuOpts.SetGraphOptimizationLevel(onnxruntime_go.GraphOptimizationLevelEnableAll)
+			_ = gpuOpts.SetIntraOpNumThreads(4)
 			if errDml := gpuOpts.AppendExecutionProviderDirectML(targetDeviceID); errDml == nil {
 				textSession, errText = onnxruntime_go.NewDynamicAdvancedSession(
 					textModelPath,
@@ -390,66 +392,119 @@ func downloadOnnxRuntime(targetLibName string) error {
 // --- EMBEDDING ENGINE ---
 
 func GetEmbedding(text string) ([]float32, error) {
+	batch, err := GetBatchEmbeddings([]string{text})
+	if err != nil {
+		return nil, err
+	}
+	if len(batch) == 0 {
+		return nil, fmt.Errorf("empty embedding result")
+	}
+	return batch[0], nil
+}
+
+func GetBatchEmbeddings(texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
 	if !IsAIReady {
 		return nil, fmt.Errorf("AI engine not ready")
 	}
 
 	isGemma := CurrentSettings.EmbeddingModel == "embeddinggemma-2-q4"
-	if isGemma {
-		if ORT_GemmaTextSession == nil {
-			return nil, fmt.Errorf("Gemma text session not loaded")
+	if !isGemma {
+		if ORT_Session == nil {
+			return nil, fmt.Errorf("MiniLM session not loaded")
 		}
-
-		inputIDSlice := Tokenize(text)
-		seqLength := int64(len(inputIDSlice))
-
-		inputIDs := make([]int64, seqLength)
-		attentionMask := make([]int64, seqLength)
-		for i, id := range inputIDSlice {
-			inputIDs[i] = id
-			attentionMask[i] = 1
+		var results [][]float32
+		for _, text := range texts {
+			vec, err := getSingleMiniLMEmbedding(text)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, vec)
 		}
+		return results, nil
+	}
 
-		tInput, err := onnxruntime_go.NewTensor([]int64{1, seqLength}, inputIDs)
-		if err != nil {
-			return nil, err
+	if ORT_GemmaTextSession == nil {
+		return nil, fmt.Errorf("Gemma text session not loaded")
+	}
+
+	batchSize := len(texts)
+	tokenized := make([][]int64, batchSize)
+	maxLen := int64(8)
+
+	for i, t := range texts {
+		tokens := Tokenize(t)
+		if int64(len(tokens)) > maxLen {
+			maxLen = int64(len(tokens))
 		}
-		defer tInput.Destroy()
+		tokenized[i] = tokens
+	}
 
-		tMask, err := onnxruntime_go.NewTensor([]int64{1, seqLength}, attentionMask)
-		if err != nil {
-			return nil, err
+	if maxLen > 512 {
+		maxLen = 512
+	}
+
+	totalTokens := int64(batchSize) * maxLen
+	inputIDs := make([]int64, totalTokens)
+	attentionMask := make([]int64, totalTokens)
+
+	for b := 0; b < batchSize; b++ {
+		tokens := tokenized[b]
+		rowLen := int64(len(tokens))
+		if rowLen > maxLen {
+			rowLen = maxLen
 		}
-		defer tMask.Destroy()
-
-		tEmptyImg, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
-		defer tEmptyImg.Destroy()
-		tEmptyVid, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
-		defer tEmptyVid.Destroy()
-		tEmptyAud, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
-		defer tEmptyAud.Destroy()
-
-		tOutput, err := onnxruntime_go.NewEmptyTensor[float32]([]int64{1, 768})
-		if err != nil {
-			return nil, err
+		rowOffset := int64(b) * maxLen
+		for s := int64(0); s < rowLen; s++ {
+			inputIDs[rowOffset+s] = tokens[s]
+			attentionMask[rowOffset+s] = 1
 		}
-		defer tOutput.Destroy()
+	}
 
-		err = ORT_GemmaTextSession.Run(
-			[]onnxruntime_go.Value{tInput, tMask, tEmptyImg, tEmptyVid, tEmptyAud},
-			[]onnxruntime_go.Value{tOutput},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("Gemma text run error: %w", err)
-		}
+	tInput, err := onnxruntime_go.NewTensor([]int64{int64(batchSize), maxLen}, inputIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer tInput.Destroy()
 
-		outputData := tOutput.GetData()
-		embedding := make([]float32, 768)
-		copy(embedding, outputData[:768])
+	tMask, err := onnxruntime_go.NewTensor([]int64{int64(batchSize), maxLen}, attentionMask)
+	if err != nil {
+		return nil, err
+	}
+	defer tMask.Destroy()
 
-		// L2 Normalize
+	tEmptyImg, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+	defer tEmptyImg.Destroy()
+	tEmptyVid, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+	defer tEmptyVid.Destroy()
+	tEmptyAud, _ := onnxruntime_go.NewTensor([]int64{0, 512}, []float32{})
+	defer tEmptyAud.Destroy()
+
+	tOutput, err := onnxruntime_go.NewEmptyTensor[float32]([]int64{int64(batchSize), 768})
+	if err != nil {
+		return nil, err
+	}
+	defer tOutput.Destroy()
+
+	err = ORT_GemmaTextSession.Run(
+		[]onnxruntime_go.Value{tInput, tMask, tEmptyImg, tEmptyVid, tEmptyAud},
+		[]onnxruntime_go.Value{tOutput},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("Gemma batched text run error: %w", err)
+	}
+
+	outputData := tOutput.GetData()
+	results := make([][]float32, batchSize)
+
+	for b := 0; b < batchSize; b++ {
+		row := make([]float32, 768)
+		copy(row, outputData[b*768:(b+1)*768])
+
 		var sumSquares float32
-		for _, val := range embedding {
+		for _, val := range row {
 			sumSquares += val * val
 		}
 		norm := float32(math.Sqrt(float64(sumSquares)))
@@ -457,11 +512,15 @@ func GetEmbedding(text string) ([]float32, error) {
 			norm = 1e-9
 		}
 		for j := 0; j < 768; j++ {
-			embedding[j] /= norm
+			row[j] /= norm
 		}
-
-		return embedding, nil
+		results[b] = row
 	}
+
+	return results, nil
+}
+
+func getSingleMiniLMEmbedding(text string) ([]float32, error) {
 
 	// MiniLM
 	if ORT_Session == nil {
@@ -559,7 +618,7 @@ func preprocessGemmaImage(img image.Image) ([]float32, []int64) {
 
 	// Resize image
 	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
-	draw.CatmullRom.Scale(dst, dst.Rect, img, origB, draw.Over, nil)
+	draw.BiLinear.Scale(dst, dst.Rect, img, origB, draw.Over, nil)
 
 	patchesY := targetH / patchSize
 	patchesX := targetW / patchSize

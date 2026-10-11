@@ -44,6 +44,10 @@ func InitDB(dbPath string) {
 		log.Printf("Failed to enable WAL: %v", err)
 	}
 	DB.Exec("PRAGMA busy_timeout = 10000;")
+	DB.Exec("PRAGMA synchronous = NORMAL;")
+	DB.Exec("PRAGMA cache_size = -64000;")
+	DB.Exec("PRAGMA mmap_size = 268435456;")
+	DB.Exec("PRAGMA temp_store = MEMORY;")
 
 	// Main file registry. 'icon_data' stores base64 images.
 	_, err = DB.Exec(`
@@ -76,6 +80,11 @@ func InitDB(dbPath string) {
 	);`)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	_, err = DB.Exec(`CREATE INDEX IF NOT EXISTS idx_file_vectors_file_id ON file_vectors(file_id);`)
+	if err != nil {
+		log.Printf("Error creating index idx_file_vectors_file_id: %v", err)
 	}
 
 	_, err = DB.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_minilm USING vec0(embedding float[384]);`)
@@ -185,29 +194,76 @@ func GetFilesNeedingEmbedding() (map[int]FileData, error) {
 	return results, nil
 }
 
+type VectorItem struct {
+	FileID     int
+	ChunkIndex int
+	Vector     []float32
+}
+
 func SaveVector(fileId int, chunkIndex int, vector []float32) error {
-	res, err := DB.Exec(`INSERT INTO file_vectors (file_id, chunk_index) VALUES (?, ?)`, fileId, chunkIndex)
-	if err != nil {
-		return err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return err
+	return SaveBatchVectors([]VectorItem{{FileID: fileId, ChunkIndex: chunkIndex, Vector: vector}})
+}
+
+func SaveBatchVectors(items []VectorItem) error {
+	if len(items) == 0 {
+		return nil
 	}
 
-	// Convert []float32 to byte slice for BLOB storage
-	byteBuf := make([]byte, len(vector)*4)
-	for i, v := range vector {
-		bits := math.Float32bits(v)
-		binary.LittleEndian.PutUint32(byteBuf[i*4:], bits)
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
 	}
-	
-	if len(vector) == 384 {
-		_, err = DB.Exec(`INSERT INTO vec_minilm (rowid, embedding) VALUES (?, ?)`, id, byteBuf)
-	} else if len(vector) == 768 {
-		_, err = DB.Exec(`INSERT INTO vec_gemma (rowid, embedding) VALUES (?, ?)`, id, byteBuf)
+	defer tx.Rollback()
+
+	fvStmt, err := tx.Prepare(`INSERT INTO file_vectors (file_id, chunk_index) VALUES (?, ?)`)
+	if err != nil {
+		return err
 	}
-	return err
+	defer fvStmt.Close()
+
+	var gemmaStmt, minilmStmt *sql.Stmt
+
+	for _, it := range items {
+		if len(it.Vector) == 0 {
+			continue
+		}
+		res, err := fvStmt.Exec(it.FileID, it.ChunkIndex)
+		if err != nil {
+			continue
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			continue
+		}
+
+		byteBuf := make([]byte, len(it.Vector)*4)
+		for i, v := range it.Vector {
+			bits := math.Float32bits(v)
+			binary.LittleEndian.PutUint32(byteBuf[i*4:], bits)
+		}
+
+		if len(it.Vector) == 768 {
+			if gemmaStmt == nil {
+				gemmaStmt, err = tx.Prepare(`INSERT INTO vec_gemma (rowid, embedding) VALUES (?, ?)`)
+				if err != nil {
+					return err
+				}
+				defer gemmaStmt.Close()
+			}
+			_, _ = gemmaStmt.Exec(id, byteBuf)
+		} else if len(it.Vector) == 384 {
+			if minilmStmt == nil {
+				minilmStmt, err = tx.Prepare(`INSERT INTO vec_minilm (rowid, embedding) VALUES (?, ?)`)
+				if err != nil {
+					return err
+				}
+				defer minilmStmt.Close()
+			}
+			_, _ = minilmStmt.Exec(id, byteBuf)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func SearchFiles(queryText string, minTime int64, maxTime int64) ([]SearchResult, error) {
